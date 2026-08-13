@@ -1,0 +1,29 @@
+# systemd unit for the Ripcord view proxy.
+# Install to /etc/systemd/system/ripcord.service
+#
+# the one value that matters, READ_RPC, is read from /etc/ripcord.env, which you
+# create root-owned and chmod 600. nothing secret sits in the repo or in this file.
+
+[Unit]
+Description=Wildcat ripcord view proxy (read-only feed + static site)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=ripcord
+WorkingDirectory=/opt/ripcord/hosted
+EnvironmentFile=/etc/ripcord.env
+ExecStart=/usr/bin/node view-proxy.js
+Restart=on-failure
+RestartSec=3
+
+# hardening
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+ReadOnlyPaths=/opt/ripcord
+
+[Install]
+WantedBy=multi-user.target

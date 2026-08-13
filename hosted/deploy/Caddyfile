@@ -1,0 +1,19 @@
+# Caddy config. It terminates TLS (Let's Encrypt, automatically) and reverse-proxies
+# to the node view proxy on localhost:8899. Lives on the dedicated droplet.
+#
+# Drop this at /etc/caddy/Caddyfile, swap in your own domain, then: systemctl reload caddy
+
+your-domain.example {
+    encode gzip zstd
+
+    # the node process serves both the static site and the /read view endpoint
+    reverse_proxy 127.0.0.1:8899
+
+    # a few hardening headers. the page is self-contained; the only outbound call it
+    # makes is to the relay the operator types in
+    header {
+        Referrer-Policy no-referrer
+        X-Content-Type-Options nosniff
+        -Server
+    }
+}

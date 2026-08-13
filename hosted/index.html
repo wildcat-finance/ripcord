@@ -1,0 +1,788 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Wildcat · ripcord monitor</title>
+<style>
+  /* Wildcat brand palette */
+  :root {
+    --bunker:#141414; --black-rock:#30313E; --manatee:#8A8C9F; --santas-grey:#A0A0B0;
+    --athens-grey:#EFF0F4; --white-lilac:#E6E7EB; --grey-suit:#BEBECE;
+    --blue-ribbon:#4971FF; --ultramarine:#3E68FF; --cornflower:#6688FF; --hawkes:#D2DDFF;
+    --galliano:#D7A820; --buttered-rum:#9E7A11; --carmine:#F1464B; --watermelon:#FA6F77;
+    color-scheme: dark;
+    --bg:var(--bunker); --panel:#1b1c24; --panel-2:#22232d; --line:#33343f;
+    --fg:var(--athens-grey); --muted:var(--santas-grey); --accent:var(--blue-ribbon);
+    --ok:var(--cornflower); --warn:var(--galliano); --danger:var(--watermelon);
+    --head:Arial,"Liberation Sans",Helvetica,sans-serif;
+    --body:"Inter",system-ui,-apple-system,Segoe UI,Roboto,sans-serif;
+    --mono:ui-monospace,SFMono-Regular,Menlo,monospace;
+  }
+  * { box-sizing:border-box; }
+  body { margin:0; font-family:var(--body); font-size:14px; line-height:1.5; background:var(--bg); color:var(--fg); }
+  h1,h2,h3,h4 { font-family:var(--head); font-weight:700; letter-spacing:-.01em; }
+  code,.mono { font-family:var(--mono); }
+  a { color:var(--cornflower); }
+
+  header { padding:16px 22px; border-bottom:1px solid var(--line); display:flex; align-items:center; gap:14px; }
+  .wordmark { font-family:var(--head); font-weight:700; font-size:19px; letter-spacing:-.02em; }
+  .wordmark .labs { color:var(--muted); font-weight:400; }
+  .mark { width:22px; height:22px; border-radius:6px; background:linear-gradient(135deg,var(--ultramarine),var(--blue-ribbon)); display:inline-block; box-shadow:0 0 0 1px rgba(73,113,255,.4); }
+  header .sub { color:var(--muted); font-size:12px; }
+  header .spacer { margin-left:auto; }
+
+  main { max-width:1000px; margin:0 auto; padding:20px; display:grid; gap:16px; }
+  .panel { background:var(--panel); border:1px solid var(--line); border-radius:10px; padding:18px; }
+  .panel h2 { font-size:12px; text-transform:uppercase; letter-spacing:.12em; color:var(--muted); margin:0 0 14px; }
+  .grid { display:grid; grid-template-columns:repeat(auto-fit,minmax(210px,1fr)); gap:12px 26px; }
+  .kv { display:flex; flex-direction:column; gap:3px; }
+  .kv .k { color:var(--muted); font-size:10.5px; text-transform:uppercase; letter-spacing:.08em; }
+  .kv .v { word-break:break-all; font-family:var(--mono); font-size:13px; }
+  label { display:block; font-size:10.5px; text-transform:uppercase; letter-spacing:.08em; color:var(--muted); margin:10px 0 4px; }
+  input,textarea { width:100%; background:#101019; border:1px solid var(--line); color:var(--fg); border-radius:7px; padding:9px; font-family:var(--mono); font-size:12.5px; }
+  textarea { resize:vertical; min-height:56px; }
+  .row { display:grid; grid-template-columns:1fr 1fr; gap:14px; }
+  @media (max-width:640px){ .row{ grid-template-columns:1fr; } }
+  .pill { display:inline-block; padding:2px 9px; border-radius:999px; font-size:12px; border:1px solid var(--line); font-family:var(--mono); }
+  .pill.ok{ color:var(--ok); border-color:var(--ok); } .pill.warn{ color:var(--warn); border-color:var(--warn); } .pill.err{ color:var(--danger); border-color:var(--danger); }
+  button { font-family:var(--body); font-weight:600; padding:9px 16px; border-radius:8px; border:1px solid var(--line); background:var(--panel-2); color:var(--fg); cursor:pointer; }
+  button:hover:not(:disabled){ border-color:var(--accent); }
+  button.primary { background:var(--blue-ribbon); border-color:var(--blue-ribbon); color:#fff; }
+  button.danger { border-color:var(--carmine); color:var(--watermelon); }
+  button.ghost { background:transparent; font-size:12px; padding:7px 13px; }
+  button:disabled { opacity:.45; cursor:not-allowed; }
+  .notice { border-radius:9px; padding:12px 14px; font-size:12.5px; }
+  .notice.rpc { border:1px solid var(--warn); color:#ecd9a6; background:rgba(215,168,32,.06); }
+  .notice.ro { border:1px solid var(--line); color:var(--muted); }
+  .notice.danger { border:1px solid var(--carmine); color:#f6c3c5; background:rgba(241,70,75,.06); }
+  .muted{ color:var(--muted); } .hidden{ display:none !important; }
+  footer { color:var(--muted); font-size:11.5px; text-align:center; padding:24px 24px 96px; border-top:1px solid var(--line); }
+
+  /* info (?) button */
+  .q{ display:inline-flex; align-items:center; justify-content:center; width:16px; height:16px; border-radius:50%; border:1px solid var(--line); background:transparent; color:var(--muted); font-size:11px; font-weight:700; cursor:pointer; padding:0; margin-left:6px; line-height:1; vertical-align:middle; }
+  .q:hover{ border-color:var(--accent); color:var(--fg); }
+
+  /* Ask-AI dropdown menu */
+  .menu-wrap{ position:relative; }
+  .menu{ position:absolute; right:0; top:calc(100% + 8px); min-width:248px; background:var(--panel); border:1px solid var(--line); border-radius:10px; padding:6px; box-shadow:0 14px 44px rgba(0,0,0,.55); z-index:40; }
+  .menu a, .menu button.mi{ width:100%; display:flex; align-items:center; gap:10px; padding:9px 10px; border-radius:7px; background:transparent; border:none; color:var(--fg); font-size:13px; font-weight:500; text-align:left; text-decoration:none; cursor:pointer; }
+  .menu a:hover, .menu button.mi:hover{ background:var(--panel-2); }
+  .menu .mi-ic{ width:20px; height:20px; flex:0 0 20px; display:flex; align-items:center; justify-content:center; color:var(--muted); }
+  .menu .mi-ic svg{ width:16px; height:16px; }
+  .menu .mi-col{ display:flex; flex-direction:column; gap:1px; min-width:0; }
+  .menu .mi-sub{ color:var(--muted); font-size:11px; font-weight:400; }
+  .menu .ext{ margin-left:auto; color:var(--muted); font-size:12px; }
+  .menu .sep{ height:1px; background:var(--line); margin:5px 4px; }
+
+  /* Mascot */
+  #mascot { position:fixed; right:12px; bottom:0; width:clamp(96px,11vw,168px); height:auto; z-index:6; pointer-events:none; user-select:none; -webkit-user-drag:none; filter:drop-shadow(0 6px 18px rgba(0,0,0,.45)); }
+  @media (max-width:640px){ #mascot{ width:84px; right:6px; opacity:.92; } }
+
+  /* Modal */
+  .modal{ position:fixed; inset:0; background:rgba(10,10,12,.82); backdrop-filter:blur(3px); display:flex; align-items:flex-start; justify-content:center; padding:40px 16px; z-index:60; overflow:auto; }
+  .modal-card{ max-width:720px; width:100%; background:var(--panel); border:1px solid var(--line); border-radius:12px; box-shadow:0 20px 60px rgba(0,0,0,.5); }
+  .modal-head{ display:flex; align-items:center; justify-content:space-between; padding:16px 20px; border-bottom:1px solid var(--line); position:sticky; top:0; background:var(--panel); border-radius:12px 12px 0 0; }
+  .modal-head h3{ margin:0; font-size:16px; }
+  .modal-body{ padding:20px; font-size:13px; line-height:1.65; }
+  .modal-body h4{ font-size:13px; margin:18px 0 6px; color:var(--fg); }
+  .modal-body p{ margin:8px 0; } .modal-body ul{ margin:8px 0; padding-left:18px; } .modal-body li{ margin:4px 0; }
+  .icon{ background:transparent; border:none; color:var(--muted); font-size:16px; padding:4px 8px; }
+  .code{ background:#0b0e13; border:1px solid var(--line); border-radius:8px; padding:10px 12px; font-family:var(--mono); font-size:12px; white-space:pre-wrap; word-break:break-all; overflow:auto; color:var(--white-lilac); }
+  .step{ border-left:2px solid var(--line); padding:2px 0 2px 14px; margin:16px 0; }
+  .step > b{ color:var(--fg); }
+  .hashline{ font-family:var(--mono); font-size:11px; color:var(--muted); word-break:break-all; }
+  .copyrow{ display:flex; gap:8px; margin-top:8px; flex-wrap:wrap; }
+  .copyrow button{ font-size:12px; padding:6px 12px; }
+  .kbadge{ display:inline-block; font-size:11px; padding:1px 7px; border-radius:999px; border:1px solid var(--line); color:var(--muted); }
+  .kbadge.ok{ color:var(--ok); border-color:var(--ok); } .kbadge.warn{ color:var(--warn); border-color:var(--warn); }
+  .toast{ position:fixed; bottom:22px; left:50%; transform:translateX(-50%); background:var(--panel-2); border:1px solid var(--accent); color:var(--fg); padding:8px 16px; border-radius:8px; font-size:13px; z-index:70; opacity:0; transition:opacity .2s; pointer-events:none; }
+  .toast.show{ opacity:1; }
+</style>
+</head>
+<body>
+
+<header>
+  <span class="mark"></span>
+  <span class="wordmark">Wildcat<span class="labs">:</span> Ripcord</span>
+  <span class="sub">Wildcat V2 withdrawal recovery · monitor &amp; arm</span>
+  <span class="spacer"></span>
+  <div class="menu-wrap">
+    <button class="ghost" id="askAiBtn" aria-haspopup="true" aria-expanded="false">Ask AI ▾</button>
+    <div class="menu hidden" id="askAiMenu" role="menu">
+      <a id="ai-chatgpt" role="menuitem" target="_blank" rel="noopener noreferrer">
+        <span class="mi-ic"><svg viewBox="0 0 512 512" fill="currentColor" aria-hidden="true"><path d="M475.3 209.6c11.6-34.9 7.6-73.1-11-104.8-27.9-48.6-84.1-73.7-138.9-61.9-24.4-27.5-59.5-43.1-96.2-42.9-56.1-.1-105.8 36-123.1 89.3-36 7.4-67.1 29.9-85.3 61.9-28.1 48.5-21.7 109.7 15.9 151.3-11.6 34.9-7.6 73.1 11 104.8 27.9 48.6 84.1 73.7 138.9 61.9 24.4 27.5 59.5 43.1 96.2 42.9 56.1 .1 105.9-36 123.1-89.4 36-7.4 67.1-29.9 85.3-61.9 28.1-48.5 21.7-109.6-15.9-151.2zm-192.4 269c-22.4 0-44.2-7.8-61.4-22.2 .8-.4 2.1-1.2 3-1.7l102-58.9c5.2-3 8.4-8.5 8.4-14.5l0-143.7 43.1 24.9c.5 .2 .8 .7 .8 1.2l0 119c-.1 52.9-42.9 95.8-95.9 96zm-206.1-88c-11.2-19.4-15.3-42.2-11.4-64.3 .8 .4 2.1 1.3 3 1.8l102 58.9c5.2 3 11.6 3 16.8 0l124.5-71.9 0 49.8c0 .5-.2 1-.6 1.3L207.8 425.6C161.9 452 103.3 436.3 76.7 390.5zM49.9 167.9c11.2-19.5 28.9-34.3 49.9-42.1 0 .9 0 2.4 0 3.5l0 117.8c0 6 3.2 11.5 8.4 14.5l124.5 71.9-43.1 24.9c-.4 .3-1 .3-1.5 .1L85 299c-45.8-26.5-61.5-85.1-35.1-131zm354 82.4l-124.5-71.9 43.1-24.9c.4-.3 1-.3 1.5-.1L427 213c45.9 26.5 61.6 85.2 35.1 131.1-11.2 19.4-28.9 34.3-49.9 42l0-121.3c0-6-3.1-11.5-8.3-14.5zm42.9-64.5c-.8-.5-2.1-1.3-3-1.8l-102-58.9c-5.2-3-11.6-3-16.8 0l-124.5 71.9 0-49.8c0-.5 .2-1 .6-1.3L304.2 86.4c45.9-26.5 104.6-10.7 131.1 35.2 11.2 19.4 15.2 42.1 11.4 64.2zM177.2 274.5L134 249.6c-.5-.2-.8-.7-.8-1.2l0-119c0-53 43-95.9 96-95.9 22.4 0 44.1 7.9 61.3 22.2-.8 .4-2.1 1.2-3 1.7l-102 58.9c-5.2 3-8.4 8.5-8.4 14.5l-.1 143.7zM200.6 224l55.4-32 55.4 32 0 64-55.4 32-55.4-32z"></path></svg></span>
+        <span class="mi-col"><span>Open in ChatGPT</span><span class="mi-sub">Ask about Ripcord</span></span><span class="ext">↗</span></a>
+      <a id="ai-claude" role="menuitem" target="_blank" rel="noopener noreferrer">
+        <span class="mi-ic"><svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M12 2.2l1.9 5.1 5.1 1.9-5.1 1.9L12 16.2l-1.9-5.1L5 9.2l5.1-1.9L12 2.2zM12 15l1 2.9 2.9 1-2.9 1L12 22.8l-1-2.9-2.9-1 2.9-1L12 15z"></path></svg></span>
+        <span class="mi-col"><span>Open in Claude</span><span class="mi-sub">Ask about Ripcord</span></span><span class="ext">↗</span></a>
+      <a id="ai-perplexity" role="menuitem" target="_blank" rel="noopener noreferrer">
+        <span class="mi-ic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><circle cx="11" cy="11" r="7"></circle><path d="M21 21l-4-4"></path></svg></span>
+        <span class="mi-col"><span>Open in Perplexity</span></span><span class="ext">↗</span></a>
+      <div class="sep"></div>
+      <button class="mi" id="ai-copy" role="menuitem"><span class="mi-ic">⧉</span><span class="mi-col"><span>Copy the prompt</span></span></button>
+      <a href="https://docs.wildcat.finance" role="menuitem" target="_blank" rel="noopener noreferrer"><span class="mi-ic">📖</span><span class="mi-col"><span>Wildcat docs</span></span><span class="ext">↗</span></a>
+    </div>
+  </div>
+  <button class="ghost" data-modal="security">🔒 Site security</button>
+  <button class="ghost" data-modal="guide">How it works</button>
+</header>
+
+<main id="app">
+  <div class="panel" style="padding:16px 18px;">
+    <div style="font-family:var(--head); font-weight:700; font-size:15px; margin-bottom:6px;">Emergency withdrawal recovery for Wildcat V2</div>
+    <p style="margin:0; color:var(--white-lilac); font-size:13px; line-height:1.6;">
+      When a lender's wallet is compromised, <b>Ripcord</b> has a go at rescuing a queued withdrawal, on a <b>best-effort basis</b>. It
+      executes the withdrawal and gets the released funds into a safe wallet in one <b>private, atomic bundle</b>, aiming to have them
+      out before a sweeper watching the public mempool can grab them. Whether it lands comes down to a builder winning the block, so
+      there are <b>no guarantees and no promises</b>. This page reads the market's live state and helps you put that bundle together and
+      fire it; it holds no key and never moves funds on its own.
+    </p>
+    <p style="margin:12px 0 0; padding:10px 12px; border:1px solid var(--warn); border-radius:8px; background:rgba(215,168,32,.06); color:#ecd9a6; font-size:12.5px; line-height:1.6;">
+      <b>Precondition:</b> this only works if there is already a withdrawal request queued <b>from the compromised wallet</b>. Ripcord
+      executes an existing queued withdrawal for that account. If the tokens were moved off to a hostile address <b>before</b> that
+      request went in, there is nothing this tool, or anyone, can do to get them back.
+    </p>
+  </div>
+
+  <div class="notice rpc" id="rpcNotice">
+    <b>How this handles data and funds.</b> Market figures come from a Wildcat Labs read-only feed, provided
+    as is and without warranty, so check them against something you trust before you act on timing. This page
+    never moves funds itself. When you arm, the transactions you have signed go from your browser to a fan-out
+    relayer run by a Wildcat Labs team member on their own private infrastructure, separate from Wildcat Labs'
+    systems (you can point it at any endpoint instead). Wildcat Labs the company does not run that relayer, submit
+    through it, or take on any liability for it.
+  </div>
+
+  <!-- Config -->
+  <div class="panel">
+    <h2>Configuration <button class="q" data-explain="config">?</button></h2>
+    <div class="notice ro" style="margin-bottom:4px;">
+      Market data comes through a Wildcat Labs <b>read-only</b> feed. Arming and submission (below) run in your
+      browser, against whatever relay endpoints you list; Wildcat Labs the company does not submit or broadcast,
+      and takes on no liability for it. The notice above says who runs the default relayer.
+    </div>
+    <div class="row">
+      <div><label>Market address <button class="q" data-explain="market">?</button></label><input id="market" spellcheck="false" placeholder="0x…" /></div>
+      <div><label>Account (receives the release) <button class="q" data-explain="account">?</button></label><input id="account" spellcheck="false" placeholder="0x…" /></div>
+    </div>
+    <div class="row">
+      <div>
+        <label>Batch expiry (uint32) <button class="q" data-explain="expiry">?</button></label>
+        <input id="expiry" spellcheck="false" placeholder="auto-detected from the account" />
+        <select id="batchSelect" class="hidden" style="margin-top:6px;"></select>
+        <div id="batchInfo" class="muted" style="font-size:11.5px; margin-top:6px; line-height:1.6;"></div>
+      </div>
+      <div><label>Destination (safe wallet) <button class="q" data-explain="destination">?</button></label><input id="destination" spellcheck="false" placeholder="0x…" /></div>
+    </div>
+    <div style="margin-top:14px; display:flex; gap:10px; align-items:center; flex-wrap:wrap;">
+      <button id="refresh">Refresh</button>
+      <span id="rpcstate" class="muted">idle</span>
+      <span id="served" class="muted"></span>
+    </div>
+  </div>
+
+  <!-- Monitor -->
+  <div class="panel">
+    <h2>Live state <button class="q" data-explain="mechanism">?</button></h2>
+    <div class="grid" id="state"><span class="muted">enter a market and account, then refresh.</span></div>
+  </div>
+
+  <!-- Arming -->
+  <div class="panel">
+    <h2>Arm (client-side) <button class="q" data-explain="arm">?</button></h2>
+    <div class="notice ro" style="margin-bottom:14px;">
+      Keys stay in your wallet, or arrive already signed. This page holds neither. The front-run-safe path is a
+      private bundle of pre-signed transactions; the wallet path below broadcasts in the open and is for testnet
+      or a rehearsal only.
+    </div>
+
+    <div class="row">
+      <div>
+        <h3 style="font-size:13px;margin:0 0 6px;">A · Private bundle (pre-signed) <button class="q" data-explain="bundle">?</button></h3>
+        <p class="muted" style="font-size:12px;margin:0 0 10px;">The forward leg has to be signed by the receiving
+          account, offline. You never enter a key here.</p>
+        <button id="howToSign" class="primary" style="margin-bottom:12px;">How to produce the signed forward transaction →</button>
+        <label>Relay endpoints, one per line, submitted in parallel <button class="q" data-explain="relay">?</button></label>
+        <textarea id="relay" spellcheck="false" placeholder="https://rpc.titanbuilder.xyz" style="min-height:46px;"></textarea>
+        <div class="muted" style="font-size:11px;margin-top:5px;">Defaults to a <b>fan-out relayer</b> that fires at Flashbots, Titan and beaverbuild at once, with a direct Titan line as a browser fallback. Bundles stay private and atomic, and only land when a builder wins the block. Edit the list (one per line) to use your own. Wildcat Labs the company is not in the submit path.</div>
+        <label>Signed leg 1, process/execute (0x…)</label>
+        <textarea id="rawA" spellcheck="false"></textarea>
+        <label>Signed leg 2, execute/forward (0x…)</label>
+        <textarea id="rawB" spellcheck="false"></textarea>
+        <label>Signed leg 3, forward, from the account (0x…)</label>
+        <textarea id="rawC" spellcheck="false"></textarea>
+        <div style="display:flex; gap:10px; margin-top:12px;">
+          <button id="simBundle" disabled>Simulate</button>
+          <button id="submitBundle" class="primary" disabled>Submit private bundle</button>
+        </div>
+      </div>
+      <div>
+        <h3 style="font-size:13px;margin:0 0 6px;">B · Wallet (public, rehearsal) <button class="q" data-explain="wallet">?</button></h3>
+        <p class="muted" style="font-size:12px;margin:0 0 8px;">Connects an injected wallet to broadcast the
+          legs as ordinary transactions. Visible in the public mempool, so <b>not</b> front-run-safe. Use for
+          testnet or dry rehearsal.</p>
+        <button id="connect">Connect wallet</button>
+        <div class="grid" id="wallet" style="margin-top:12px;"></div>
+        <div class="notice danger" style="margin-top:12px; font-size:12px;">
+          Never paste a raw private key into this or any hosted page. Wildcat Labs will never ask you to.
+        </div>
+      </div>
+    </div>
+    <div id="armLog" class="mono muted" style="margin-top:14px; white-space:pre-wrap; font-size:12px;"></div>
+  </div>
+
+  <footer>
+    Wildcat Labs · ripcord. Monitors and arms Wildcat V2 recoveries. Market data is read-only from
+    Wildcat Labs; arming and submission run client-side against the relay endpoints you list, not Wildcat
+    Labs' systems. Provided as is, without warranty. Verify everything independently.
+  </footer>
+
+  <img id="mascot" src="assets/mascot.png" alt="" aria-hidden="true" />
+</main>
+
+<!-- Modal shell -->
+<div id="modal" class="modal hidden" role="dialog" aria-modal="true">
+  <div class="modal-card">
+    <div class="modal-head"><h3 id="modalTitle"></h3><button id="modalClose" class="icon" aria-label="close">✕</button></div>
+    <div id="modalBody" class="modal-body"></div>
+  </div>
+</div>
+<div id="toast" class="toast"></div>
+
+<!-- Embedded offline signer source. type="text/plain" => never executed; served here so
+     the operator can download it from the UI (the .js is not otherwise reachable). -->
+<script type="text/plain" id="signerSrc">#!/usr/bin/env node
+//
+// OFFLINE forward-transaction signer.
+//
+// Run this on an air-gapped (offline) machine. It builds and signs ONE ERC-20
+// transfer transaction from the parameters you were given, using your private
+// key, and prints the signed transaction as a hex string. The key is used only
+// to sign; it is never written anywhere and never sent over any network. This
+// script makes no network connections at all.
+//
+// You hand back only the signed hex string. That string authorises exactly one
+// thing: moving the stated amount of the stated token to the stated
+// destination. It cannot be altered to do anything else.
+//
+// Usage:
+//   node offline-sign.js sign-params.json
+//     - reads the transaction parameters from the JSON file
+//     - prompts for your private key (input is masked), or reads PRIVATE_KEY
+//       from the environment, or --key-file <path>
+//
+// Requires the `ethers` package. Prepare a folder WHILE ONLINE:
+//   mkdir ripcord-sign && cd ripcord-sign && npm init -y && npm i ethers@6
+// then drop this file and sign-params.json in it and go offline to sign.
+
+import { readFileSync, writeFileSync } from 'node:fs';
+import readline from 'node:readline';
+import { Wallet, Interface, getAddress, formatUnits } from 'ethers';
+
+const ERC20_TRANSFER = new Interface(['function transfer(address to, uint256 amount) returns (bool)']);
+
+function fail(msg) {
+  process.stderr.write(`error: ${msg}\n`);
+  process.exit(1);
+}
+
+function askHidden(query) {
+  return new Promise((resolve) => {
+    const rl = readline.createInterface({ input: process.stdin, output: process.stdout, terminal: true });
+    const orig = rl._writeToOutput.bind(rl);
+    rl._writeToOutput = (s) => (s.includes(query) ? orig(s) : orig('*'));
+    rl.question(query, (ans) => {
+      rl.close();
+      process.stdout.write('\n');
+      resolve(ans.trim());
+    });
+  });
+}
+
+async function getKey() {
+  const fileArg = process.argv.find((a) => a.startsWith('--key-file='));
+  if (fileArg) return readFileSync(fileArg.split('=')[1], 'utf8').trim();
+  if (process.env.PRIVATE_KEY) return process.env.PRIVATE_KEY.trim();
+  return askHidden('Paste the private key for the account (input hidden): ');
+}
+
+async function main() {
+  const paramsPath = process.argv[2] || 'sign-params.json';
+  let p;
+  try {
+    p = JSON.parse(readFileSync(paramsPath, 'utf8'));
+  } catch (e) {
+    fail(`could not read params file "${paramsPath}": ${e.message}`);
+  }
+
+  for (const k of ['chainId', 'asset', 'destination', 'amount', 'nonce', 'gasLimit', 'maxFeePerGas', 'maxPriorityFeePerGas']) {
+    if (p[k] === undefined || p[k] === null || p[k] === '') fail(`params missing field: ${k}`);
+  }
+
+  const asset = getAddress(p.asset);
+  const destination = getAddress(p.destination);
+  const amount = BigInt(p.amount);
+  const decimals = p.decimals != null ? Number(p.decimals) : 6;
+
+  const tx = {
+    type: 2,
+    chainId: Number(p.chainId),
+    to: asset,
+    value: 0n,
+    data: ERC20_TRANSFER.encodeFunctionData('transfer', [destination, amount]),
+    nonce: Number(p.nonce),
+    gasLimit: BigInt(p.gasLimit),
+    maxFeePerGas: BigInt(p.maxFeePerGas),
+    maxPriorityFeePerGas: BigInt(p.maxPriorityFeePerGas),
+  };
+
+  const key = await getKey();
+  let wallet;
+  try {
+    wallet = new Wallet(key);
+  } catch {
+    fail('that does not look like a valid private key');
+  }
+
+  process.stdout.write('\nYou are about to sign this, and ONLY this:\n');
+  process.stdout.write(`  from (your account): ${wallet.address}\n`);
+  process.stdout.write(`  token contract:      ${asset}\n`);
+  process.stdout.write(`  action:              transfer ${formatUnits(amount, decimals)} tokens\n`);
+  process.stdout.write(`  to destination:      ${destination}\n`);
+  process.stdout.write(`  nonce:               ${tx.nonce}\n`);
+  process.stdout.write(`  chainId:             ${tx.chainId} (1 = Ethereum mainnet)\n\n`);
+
+  if (p.expectedFrom && getAddress(p.expectedFrom) !== wallet.address) {
+    fail(
+      `this key controls ${wallet.address}, but the parameters expect ${getAddress(p.expectedFrom)}. ` +
+        `Stop and check you are using the right key.`,
+    );
+  }
+
+  const signed = await wallet.signTransaction(tx);
+  writeFileSync('signed-forward-tx.txt', signed + '\n');
+
+  process.stdout.write('Signed transaction (this is what you send back):\n\n');
+  process.stdout.write(signed + '\n\n');
+  process.stdout.write('Also written to: signed-forward-tx.txt\n');
+  process.stdout.write('This string is safe to send over a secure channel. It is NOT your key.\n');
+  process.stdout.write('Do not use this wallet again until told the recovery is complete, or the\n');
+  process.stdout.write('nonce will change and this transaction will stop being valid.\n');
+}
+
+main().catch((e) => fail(e.message));
+</script>
+
+<script>
+const $ = (s)=>document.querySelector(s);
+const SEL = { avail:'0x088fee5e', balanceOf:'0x70a08231', asset:'0x38d52e0f', decimals:'0x313ce567', symbol:'0x95d89b41',
+  currentState:'0x0c3f6acf', unpaid:'0x878eb921', acctStatus:'0x02372c4f' };
+const TOPIC_WQ = '0x605eb120a664587f757c3ad540b028e87c7780c210c18c05ddde789272c2b12f';
+const ETHERSCAN = 'https://etherscan.io';
+const READ = '/read';               // same-origin read-only feed; upstream lives in server env only
+const STALE_SECONDS = 90;
+const BUILD_ID = 'ripcord-2026-08-13';
+// Operator fan-out relayer (submits to Flashbots + Titan + beaverbuild at once),
+// with a direct Titan line as a browser fallback if the relayer is unreachable.
+const DEFAULT_RELAYS = 'https://167.172.153.36.nip.io\nhttps://rpc.titanbuilder.xyz';
+// Published SHA-256 of the relayer source Wildcat runs; the Security panel fetches
+// the relayer's /attest and compares. Update if the relayer build changes.
+const EXPECTED_RELAYER_SHA256 = '8d4e1bc966e43fc9e4e88bec2e40f491734219eab61de77f1ac7326ddbab299d';
+
+/* ---------- helpers ---------- */
+async function rpcOn(url, method, params){
+  const res = await fetch(url,{method:'POST',headers:{'content-type':'application/json'},
+    body:JSON.stringify({jsonrpc:'2.0',id:1,method,params})});
+  const j = await res.json();
+  if (j.error) throw new Error(j.error.message||'rpc error');
+  return j.result;
+}
+async function pickEndpoint(){
+  const now = Math.floor(Date.now()/1000);
+  const blk = await rpcOn(READ,'eth_getBlockByNumber',['latest',false]);
+  const age = now - Number(BigInt(blk.timestamp));
+  return { url: READ, blk, age };
+}
+const host = (u)=>{ if(u===READ) return 'Wildcat Labs read feed'; try{ return new URL(u).host; }catch{ return u; } };
+async function call(url,to,data){ return rpcOn(url,'eth_call',[{to,data},'latest']); }
+const pad=(h)=>h.replace(/^0x/,'').toLowerCase().padStart(64,'0');
+const toBig=(h)=>(!h||h==='0x')?0n:BigInt(h);
+function fmt(v,dp){ const s=v.toString().padStart(dp+1,'0'); const i=s.slice(0,s.length-dp),f=s.slice(s.length-dp).replace(/0+$/,''); return f?`${i}.${f}`:i; }
+function decStr(hex){ try{ const b=hex.replace(/^0x/,''); const len=parseInt(b.slice(64,128),16); return decodeURIComponent(b.slice(128,128+len*2).replace(/(..)/g,'%$1')); }catch{ return ''; } }
+const wordAt=(hex,i)=>'0x'+hex.replace(/^0x/,'').slice(i*64,i*64+64);
+function decU32Array(hex){ const b=hex.replace(/^0x/,''); const len=parseInt(b.slice(64,128),16); const out=[]; for(let i=0;i<len;i++) out.push(Number(BigInt('0x'+b.slice(128+i*64,128+i*64+64)))); return out; }
+function fmtDate(ts){ return new Date(ts*1000).toISOString().replace('T',' ').slice(0,16)+' UTC'; }
+const shortTx=(h)=>h.slice(0,10)+'…'+h.slice(-6);
+const esc=(s)=>String(s).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+async function sha256(text){ const h=await crypto.subtle.digest('SHA-256', new TextEncoder().encode(text)); return [...new Uint8Array(h)].map(x=>x.toString(16).padStart(2,'0')).join(''); }
+function download(name, text, type='text/plain'){ const b=new Blob([text],{type}); const u=URL.createObjectURL(b); const a=document.createElement('a'); a.href=u; a.download=name; document.body.appendChild(a); a.click(); a.remove(); setTimeout(()=>URL.revokeObjectURL(u),1000); }
+function toast(m){ const t=$('#toast'); t.textContent=m; t.classList.add('show'); setTimeout(()=>t.classList.remove('show'),1400); }
+async function copyText(t){ try{ await navigator.clipboard.writeText(t); toast('copied'); }catch{ toast('copy failed, select manually'); } }
+window.copyText=copyText; window.download=download;
+
+const SIGNER_SRC = document.getElementById('signerSrc').textContent.replace(/^\n/,'');
+let SIGNER_HASH = '(hashing…)';
+sha256(SIGNER_SRC).then(h=>{ SIGNER_HASH=h; });
+
+/* ---------- Modal ---------- */
+function openModal(title, html){ $('#modalTitle').innerHTML=title; $('#modalBody').innerHTML=html; $('#modal').classList.remove('hidden'); $('#modal').scrollTop=0; }
+function closeModal(){ $('#modal').classList.add('hidden'); }
+$('#modalClose').onclick=closeModal;
+$('#modal').addEventListener('click',e=>{ if(e.target.id==='modal') closeModal(); });
+document.addEventListener('keydown',e=>{ if(e.key==='Escape') closeModal(); });
+document.addEventListener('click',e=>{
+  const q=e.target.closest('[data-explain]'); if(q){ const k=q.getAttribute('data-explain'); if(EXPLAIN[k]) openModal(EXPLAIN[k].t, EXPLAIN[k].b); return; }
+  const m=e.target.closest('[data-modal]'); if(m){ const k=m.getAttribute('data-modal'); if(k==='security') securityModal(); else if(k==='guide') openModal(EXPLAIN.mechanism.t, EXPLAIN.mechanism.b); }
+});
+
+/* ---------- Explainers ---------- */
+const EXPLAIN = {
+  config:{ t:'Configuration', b:`<p>Four values identify the recovery. Enter the market and the account; the batch and its
+    amounts are detected for you. Everything here is read-only until you deliberately arm.</p>
+    <ul><li><b>Market</b>, the Wildcat V2 market contract.</li><li><b>Account</b>, the address that queued the withdrawal and will receive the released asset.</li>
+    <li><b>Batch expiry</b>, auto-detected; identifies which withdrawal batch to execute.</li><li><b>Destination</b>, the safe wallet the recovered funds are forwarded to.</li></ul>` },
+  market:{ t:'Market address', b:`<p>The Wildcat V2 market contract (the market token itself). Its underlying asset, decimals and
+    withdrawal state are read from here through the read-only feed.</p>` },
+  account:{ t:'Account (receives the release)', b:`<p>The address that queued the withdrawal. In Wildcat V2, <code>executeWithdrawal</code> always
+    sends the released underlying asset to whoever queued it, so the released funds land here, and the forward transaction that moves them to
+    safety must be signed by <b>this</b> account.</p>` },
+  expiry:{ t:'Batch expiry', b:`<p>A withdrawal batch is identified by a <code>uint32</code> expiry timestamp. This is detected automatically from the
+    account's on-chain withdrawal status. If the account is in more than one batch you get a dropdown to choose; otherwise it fills in for you.</p>` },
+  destination:{ t:'Destination (safe wallet)', b:`<p>Where the recovered funds are forwarded, a wallet the lawful owner controls, or a multi-signature
+    wallet stood up for the purpose. The signed forward transaction is bound to this exact address and moves nothing anywhere else.</p>` },
+  mechanism:{ t:'How ripcord works', b:`<p>In a Wildcat V2 market, <code>executeWithdrawal</code> is permissionless, anyone can call it, but it always sends the
+    released asset to the account that queued the withdrawal. Doing the claim and the move-to-safety as two public transactions leaves a gap a
+    sweeper can exploit.</p>
+    <p>ripcord closes that gap with a single private bundle of up to three transactions, landing together in one block:</p>
+    <div class="step"><b>1 · process</b>, <code>repayAndProcessUnpaidWithdrawalBatches(0, N)</code> applies liquidity already in the market to the batch (optional).</div>
+    <div class="step"><b>2 · execute</b>, <code>executeWithdrawal(account, expiry)</code> releases the asset to the account.</div>
+    <div class="step"><b>3 · forward</b>, an ERC-20 transfer of the released asset from the account to the destination.</div>
+    <p>Legs 1 and 2 are permissionless (any funded relayer signs them). Leg 3 can only be signed by the account, offline. The bundle is atomic and
+    private, so the release cannot be front-run.</p>` },
+  arm:{ t:'Arming', b:`<p>Arming assembles the signed legs and submits them. This page holds no keys, and Wildcat Labs the company is not in the submit path. Submission goes from your browser to the default relayer, to any endpoint you set, or from local operator tooling.</p>
+    <p><b>Path A (private bundle)</b> is the front-run-safe path: pre-signed transactions submitted atomically. <b>Path B (wallet)</b> broadcasts
+    publicly and is for testnet or rehearsal only.</p>` },
+  bundle:{ t:'Private bundle (pre-signed)', b:`<p>Paste the three signed legs, then submit them atomically to a relay. Legs 1–2 are produced by the
+    operator's relayer; leg 3 is the forward, signed offline by the account holder, use the <b>“How to produce the signed forward transaction”</b>
+    button, which never asks for a key here.</p><p>Most bundle relays require a signed identity header and block browser requests (CORS); if submission
+    fails, run it from local operator tooling instead.</p>` },
+  wallet:{ t:'Wallet path (rehearsal only)', b:`<p>Connects an injected wallet (e.g. MetaMask) to broadcast the legs as ordinary public transactions. This is
+    visible in the mempool and therefore <b>not</b> front-run-safe. Use it for testnet or a dry rehearsal, never for the live recovery.</p>` },
+  relay:{ t:'Which relay?', b:`<p>Your browser posts the bundle straight to the endpoint(s) listed, Wildcat Labs is never in the path.</p>
+    <p>The default is a <b>fan-out relayer</b>. Your browser posts one bundle to it and it forwards,
+    server-side, to <b>Flashbots, Titan and beaverbuild</b> at once, reaching builders the browser can't call directly. A second line,
+    <span class="mono">rpc.titanbuilder.xyz</span>, is a direct browser fallback for when the relayer box is down: Titan is the one public builder that
+    accepts a keyless bundle straight from the browser.</p>
+    <p>Bundles stay private and atomic, they never hit the public mempool, and land only when one of these builders wins the target block, so a
+    submission may need resubmitting across blocks. The relayer holds only a reputation-only Flashbots identity and no wallet key. Add or replace
+    endpoints (one per line) to use your own. Simulation (<span class="mono">eth_callBundle</span>) works through the relayer (via Flashbots);
+    Titan-direct does not simulate.</p>` },
+};
+
+/* ---------- Batch discovery ---------- */
+let discKey='', discBatches=[];
+async function discoverBatches(url, market, account, now, dp, sym, force=false){
+  const key=`${url}|${market}|${account}`.toLowerCase();
+  if(!force && key===discKey){ renderBatches(now,dp,sym); return; }
+  const box=$('#batchInfo'), sel=$('#batchSelect');
+  box.textContent='detecting batches…'; sel.classList.add('hidden');
+  let batches=[];
+  try{
+    const cs=await call(url,market,SEL.currentState);
+    const pendingExpiry=Number(BigInt(wordAt(cs,6))), scaleFactor=BigInt(wordAt(cs,12));
+    let unpaid=[]; try{ unpaid=decU32Array(await call(url,market,SEL.unpaid)); }catch{}
+    const cand=[...new Set([pendingExpiry,...unpaid].filter(x=>x>0))];
+    for(const expiry of cand){
+      const st=await call(url,market,SEL.acctStatus+pad(account)+pad(BigInt(expiry).toString(16)));
+      const scaled=BigInt(wordAt(st,0)), withdrawn=BigInt(wordAt(st,1));
+      if(scaled>0n) batches.push({expiry, queued: scaled*scaleFactor/(10n**27n), withdrawn, tx:null});
+    }
+  }catch(e){ box.textContent='could not read batch state ('+e.message+')'; discKey=key; discBatches=[]; return; }
+  try{
+    const logs=await rpcOn(url,'eth_getLogs',[{address:market,fromBlock:'0x0',toBlock:'latest',topics:[TOPIC_WQ,null,'0x'+pad(account)]}]);
+    const seen=new Map();
+    for(const lg of logs){ const e=Number(BigInt(lg.topics[1])), bn=Number(BigInt(lg.blockNumber)); const p=seen.get(e); if(!p||bn>=p.bn) seen.set(e,{bn,hash:lg.transactionHash}); }
+    for(const b of batches){ const t=seen.get(b.expiry); if(t) b.tx=t.hash; }
+  }catch{}
+  for(const b of batches){ b.claimable=null; if(b.expiry<=now){ try{ b.claimable=toBig(await call(url,market,SEL.avail+pad(account)+pad(BigInt(b.expiry).toString(16)))); }catch{} } }
+  batches.sort((a,b)=>a.expiry-b.expiry);
+  discKey=key; discBatches=batches;
+  if(batches.length===1) $('#expiry').value=String(batches[0].expiry);
+  else if(batches.length>1 && !batches.some(b=>String(b.expiry)===$('#expiry').value.trim())) $('#expiry').value=String(batches[0].expiry);
+  renderBatches(now,dp,sym);
+}
+function batchCard(b,now,dp,sym){
+  const when=`${fmtDate(b.expiry)} · <span class="mono">${b.expiry}</span>`;
+  const amt=b.queued!=null?`queued ≈ ${fmt(b.queued,dp)} ${sym}`:'';
+  const state=b.expiry<=now?(b.claimable!=null?`claimable ${fmt(b.claimable,dp)} ${sym}`:'executable'):`pending · expires in ${b.expiry-now}s`;
+  const link=b.tx?` · <a href="${ETHERSCAN}/tx/${b.tx}" target="_blank" rel="noopener">queue tx ${shortTx(b.tx)} ↗</a>`
+    :` · <a href="${ETHERSCAN}/token/${$('#market').value.trim()}?a=${$('#account').value.trim()}" target="_blank" rel="noopener">withdrawals on Etherscan ↗</a>`;
+  return `expires ${when}<br>${[amt,state].filter(Boolean).join(' · ')}${link}`;
+}
+function renderBatches(now,dp,sym){
+  const box=$('#batchInfo'), sel=$('#batchSelect');
+  if(!discBatches.length){ sel.classList.add('hidden'); box.textContent='No queued withdrawals found for this account in this market.'; return; }
+  if(discBatches.length===1){ sel.classList.add('hidden'); box.innerHTML=batchCard(discBatches[0],now,dp,sym); return; }
+  sel.classList.remove('hidden');
+  sel.innerHTML=discBatches.map(b=>`<option value="${b.expiry}">${fmtDate(b.expiry)} · ${b.queued!=null?fmt(b.queued,dp)+' '+sym:'batch '+b.expiry}</option>`).join('');
+  sel.value=$('#expiry').value.trim()||String(discBatches[0].expiry);
+  const cur=discBatches.find(b=>String(b.expiry)===sel.value)||discBatches[0];
+  box.innerHTML=batchCard(cur,now,dp,sym);
+  sel.onchange=()=>{ $('#expiry').value=sel.value; save(); const b=discBatches.find(x=>String(x.expiry)===sel.value); $('#batchInfo').innerHTML=batchCard(b,now,dp,sym); refresh(); };
+}
+
+/* ---------- Config persistence + carry-back context ---------- */
+const FIELDS=['market','account','expiry','destination'];
+let signCtx = { account:'', nonce:null, asset:'', decimals:6, sym:'', destination:'', chainId:1, expiry:0, queued:null, release:null };
+function init(){
+  const q=new URLSearchParams(location.search);
+  for (const f of FIELDS) $('#'+f).value = q.get(f)||localStorage.getItem('int_'+f)||'';
+  { let rv = localStorage.getItem('int_relay'); if(!rv || rv.trim()==='https://rpc.titanbuilder.xyz') rv = DEFAULT_RELAYS; $('#relay').value = rv; }
+  if ($('#market').value && $('#account').value) refresh();
+  setInterval(()=>{ if($('#market').value && $('#account').value) refresh(); }, 20000);
+  refreshArmState();
+}
+function save(){ localStorage.setItem('int_relay',$('#relay').value);
+  for (const f of FIELDS) localStorage.setItem('int_'+f,$('#'+f).value.trim()); }
+const kv=(k,v,cls='')=>`<div class="kv"><span class="k">${k}</span><span class="v ${cls}">${v}</span></div>`;
+
+/* ---------- Monitor ---------- */
+async function refresh(){
+  save();
+  const market=$('#market').value.trim(), account=$('#account').value.trim(),
+        destination=$('#destination').value.trim();
+  if(!/^0x[0-9a-fA-F]{40}$/.test(market)||!/^0x[0-9a-fA-F]{40}$/.test(account)){
+    $('#state').innerHTML='<span class="muted">enter a valid market and account address.</span>'; return; }
+  $('#rpcstate').textContent='querying…';
+  try{
+    const {url,blk,age}=await pickEndpoint();
+    const now=Number(toBig(blk.timestamp));
+    const asset='0x'+(await call(url,market,SEL.asset)).slice(-40);
+    const dp=Number(toBig(await call(url,asset,SEL.decimals)));
+    let sym=''; try{ sym=decStr(await call(url,asset,SEL.symbol)); }catch{}
+    await discoverBatches(url, market, account, now, dp, sym);
+    const expNow=$('#expiry').value.trim();
+    let avail=0n; if(expNow){ try{ avail=toBig(await call(url,market,SEL.avail+pad(account)+pad(BigInt(expNow).toString(16)))); }catch{} }
+    const acctBal=toBig(await call(url,asset,SEL.balanceOf+pad(account)));
+    const destBal=destination?toBig(await call(url,asset,SEL.balanceOf+pad(destination))):0n;
+    const exp=Number(expNow||0), sec=exp-now;
+    // carry-back context for the signing guide
+    let nonce=null; try{ nonce=Number(BigInt(await rpcOn(url,'eth_getTransactionCount',[account,'latest']))); }catch{}
+    let chainId=1; try{ chainId=Number(BigInt(await rpcOn(url,'eth_chainId',[]))); }catch{}
+    const selBatch=discBatches.find(b=>String(b.expiry)===expNow);
+    signCtx={ account, nonce, asset, decimals:dp, sym, destination, chainId, expiry:exp,
+              queued:selBatch?selBatch.queued:null, release:signCtx.release };
+    const status=!exp?'<span class="pill">no expiry set</span>'
+      :sec<=0?'<span class="pill ok">executable</span>'
+      :`<span class="pill warn">waits ${sec}s (~${(sec/3600).toFixed(1)}h)</span>`;
+    $('#state').innerHTML=kv('status',status)+kv('asset',`${asset} ${sym?'('+sym+')':''}`)
+      +kv('claimable now',fmt(avail,dp))+kv('account balance',fmt(acctBal,dp))
+      +kv('destination balance',fmt(destBal,dp))+kv('account nonce',nonce??'n/a')
+      +kv('block time / expiry',`${now} / ${exp||'n/a'}`);
+    $('#rpcstate').innerHTML=`<span class="pill ${age>STALE_SECONDS?'warn':'ok'}">${age>STALE_SECONDS?'stale':'ok'} · block ${Number(toBig(blk.number))}</span>`;
+    $('#served').innerHTML=`<span class="muted">read feed · head age ${age}s</span>`;
+  }catch(e){
+    $('#rpcstate').innerHTML='<span class="pill err">read feed unavailable</span>';
+    $('#served').innerHTML='';
+    $('#state').innerHTML=kv('error',e.message+'. The read feed is unreachable; see the notice above.','');
+  }
+}
+$('#refresh').onclick=refresh;
+
+/* ---------- Signing guide (the .js is not otherwise reachable; served + explained here) ---------- */
+function signParamsObject(){
+  const dp=signCtx.decimals;
+  const margin = dp>=2 ? 10n**BigInt(dp-2) : 0n;                    // 0.01 of the asset
+  const base = signCtx.release ?? signCtx.queued ?? 0n;
+  const amount = base>margin ? base-margin : 0n;
+  return {
+    chainId: signCtx.chainId||1,
+    asset: signCtx.asset||'0x…',
+    decimals: dp,
+    expectedFrom: signCtx.account||'0x…',
+    destination: signCtx.destination||'0x…',
+    amount: amount.toString(),
+    nonce: signCtx.nonce??0,
+    gasLimit: '120000',
+    maxFeePerGas: '200000000000',
+    maxPriorityFeePerGas: '1000000000'
+  };
+}
+function openSignGuide(){
+  const p=signParamsObject();
+  const dp=signCtx.decimals, sym=signCtx.sym||'tokens';
+  const paramsJson=JSON.stringify(p,null,2);
+  const warns=[];
+  if(!/^0x[0-9a-fA-F]{40}$/.test(signCtx.destination||'')) warns.push('No <b>destination</b> set, fill the Destination field first; the signed transaction is bound to it.');
+  if(signCtx.nonce==null) warns.push('Account <b>nonce</b> not read yet, press Refresh; the signed transaction is bound to the current nonce.');
+  if(!signCtx.queued && !signCtx.release) warns.push('No batch <b>amount</b> detected yet, press Refresh with the batch selected.');
+  const warnHtml = warns.length?`<div class="notice danger" style="margin:0 0 14px;">${warns.map(w=>'• '+w).join('<br>')}</div>`:'';
+  const amtHuman = fmt(BigInt(p.amount||'0'),dp);
+  openModal('Produce the signed forward transaction', `
+    ${warnHtml}
+    <p>The forward leg moves the released funds from the account to the destination. Only the account holder can sign it, and it is done
+    <b>offline</b>, the private key never touches this website, any server, or the network. You hand back only a signed string that authorises
+    <b>exactly</b> this one transfer (<b>${esc(amtHuman)} ${esc(sym)}</b> → <span class="mono">${esc(p.destination)}</span>) and nothing else.</p>
+
+    <h4>1 · Prepare a folder (while online)</h4>
+    <div class="code">mkdir ripcord-sign &amp;&amp; cd ripcord-sign
+npm init -y &amp;&amp; npm i ethers@6</div>
+    <p class="muted" style="font-size:12px;">You can then disconnect from the internet for every step that follows.</p>
+
+    <h4>2 · Save the signer into that folder</h4>
+    <div class="copyrow">
+      <button class="primary" onclick="download('offline-sign.js', window.__signerSrc, 'text/javascript')">Download offline-sign.js</button>
+      <button onclick="copyText(window.__signerSrc)">Copy script</button>
+    </div>
+    <p class="hashline" style="margin-top:8px;">Integrity (SHA-256): <span id="signerHashLine">${esc(SIGNER_HASH)}</span><br>
+       <span class="muted">Confirm this matches the value Wildcat published through an official channel before running it.</span></p>
+
+    <h4>3 · Save the parameters as <span class="mono">sign-params.json</span> in the same folder</h4>
+    <div class="code" id="paramsCode">${esc(paramsJson)}</div>
+    <div class="copyrow">
+      <button class="primary" onclick="download('sign-params.json', document.getElementById('paramsCode').textContent, 'application/json')">Download sign-params.json</button>
+      <button onclick="copyText(document.getElementById('paramsCode').textContent)">Copy JSON</button>
+    </div>
+    <p class="muted" style="font-size:12px;margin-top:8px;">Amount is sized from the account's detected balance minus a 0.01 ${esc(sym)} margin. If you have a fresh
+      <i>simulated release</i> figure nearer the day, use that minus a small margin instead. Gas fields are generous defaults; raise them if the network is busy.</p>
+
+    <h4>4 · Sign, offline</h4>
+    <div class="code">node offline-sign.js sign-params.json</div>
+    <p>It prints exactly what you are signing, <b>check the amount, token and destination</b>, asks for the private key (input hidden),
+    and outputs a <span class="mono">0x…</span> string (also written to <span class="mono">signed-forward-tx.txt</span>). The key is never saved or sent.</p>
+    <p class="muted" style="font-size:12px;">Do not use that wallet again until the recovery is complete, or its nonce changes and the signed transaction stops being valid.</p>
+
+    <h4>5 · Hand the signed string back</h4>
+    <p>Send the <span class="mono">0x…</span> over a secure channel. It is safe to share, it is not the key and authorises only the one transfer.
+    Paste it here to drop it straight into the bundle:</p>
+    <textarea id="pasteSigned" placeholder="0x… signed forward transaction"></textarea>
+    <div class="copyrow"><button class="primary" onclick="useSignedForward()">Use as forward leg (leg 3)</button></div>
+
+    <h4 style="color:var(--warn)">What we will never ask</h4>
+    <p class="muted" style="font-size:12px;">No seed phrase, no private key entered on any website, no “verify” transfer. If anyone asks for those in the name of this
+    recovery, it is not us, stop and check with your contact.</p>
+  `);
+  window.__signerSrc = SIGNER_SRC;
+  // refresh the hash line once hashing completes
+  if(SIGNER_HASH.startsWith('(')) sha256(SIGNER_SRC).then(h=>{ SIGNER_HASH=h; const el=$('#signerHashLine'); if(el) el.textContent=h; });
+}
+function useSignedForward(){
+  const v=($('#pasteSigned')?.value||'').trim();
+  if(!/^0x[0-9a-fA-F]+$/.test(v)){ toast('paste a 0x… signed transaction'); return; }
+  $('#rawC').value=v; refreshArmState(); closeModal(); armlog('forward leg (leg 3) inserted from signing guide.'); toast('inserted as leg 3');
+}
+$('#howToSign').onclick=openSignGuide;
+window.useSignedForward=useSignedForward;
+
+/* ---------- Security panel ---------- */
+async function securityModal(){
+  const https = location.protocol==='https:';
+  const h = SIGNER_HASH.startsWith('(') ? await sha256(SIGNER_SRC) : SIGNER_HASH; SIGNER_HASH=h;
+  // Live relayer attestation (best-effort): read the default relayer's /attest and compare its
+  // self-reported source hash to the published build.
+  let relBlock = '';
+  const relay = (relayList()[0]||'').replace(/\/$/,'');
+  if(relay){
+    try{
+      const a = await (await fetch(relay+'/attest')).json();
+      const got=(a.relayer_sha256||'').toLowerCase(), match=got===EXPECTED_RELAYER_SHA256;
+      relBlock = `<h4>Relayer attestation</h4>
+        <p>The default relayer at <span class="mono">${esc(host(relay))}</span> reports the exact source it is running:</p>
+        <p class="hashline">source SHA-256: <b>${esc(got||'?')}</b> ${match?'<span class="kbadge ok">matches the published build</span>':'<span class="kbadge warn">does NOT match, do not use</span>'}<br>
+          identity (reputation-only, no funds): <span class="mono">${esc(a.identity||'?')}</span><br>
+          <a href="${esc(relay)}/source" target="_blank" rel="noopener">read the exact running source ↗</a> · published build <span class="mono">${EXPECTED_RELAYER_SHA256.slice(0,16)}…</span></p>
+        <p class="muted" style="font-size:12px;">This is self-reported over TLS: it shows the file the box serves matches the published build, which defends against drift and third-party tampering, not a dishonest operator. You do not have to trust it: the relayer holds <b>no wallet key</b> and cannot move or redirect your funds. The forward leg is signed by the account to a fixed destination, so the worst a bad relayer can do is drop your bundle, which shows up as no bundleHash and no on-chain inclusion, and you retry via the Titan-direct fallback or local tooling. Cryptographic proof against even a malicious operator would need a confidential-compute enclave, which this box does not use.</p>`;
+    }catch{ relBlock = `<h4>Relayer attestation</h4><p class="muted">Could not reach the relayer's <span class="mono">/attest</span> from here right now.</p>`; }
+  }
+  openModal('Site security', `
+    <p>What we can prove from inside the page, and what only you can check.</p>
+    <h4>Connection</h4>
+    <p>You are on <span class="mono">${esc(location.origin)}</span> ·
+      ${https?'<span class="kbadge ok">HTTPS / TLS</span> encrypted and certificate-validated by your browser.':'<span class="kbadge warn">NOT HTTPS</span>, do not use; leave this page.'}</p>
+    <h4>What this site does and does not do</h4>
+    <ul>
+      <li><span class="kbadge ok">read-only feed</span> Market data is read through a Wildcat Labs read-only endpoint; the upstream is never exposed to your browser.</li>
+      <li><span class="kbadge ok">no keys</span> It never asks for a private key or seed phrase. Signing happens offline in your own tooling.</li>
+      <li><span class="kbadge ok">cannot submit</span> The server refuses every non-read RPC method, it cannot broadcast a transaction even if asked.</li>
+      <li><span class="kbadge ok">no custody</span> It holds no funds and no keys.</li>
+    </ul>
+    <h4>Build</h4>
+    <p><span class="mono">${esc(BUILD_ID)}</span>, cross-check against the build id Wildcat publishes.</p>
+    <h4>Signer integrity</h4>
+    <p class="hashline">The offline signer offered here has SHA-256:<br><b>${esc(h)}</b></p>
+    <p class="muted" style="font-size:12px;">Before running it offline, confirm this hash matches the one Wildcat published. That proves the script you run is the real one.</p>
+    ${relBlock}
+    <h4>What we cannot prove for you</h4>
+    <p>TLS proves you have a private, unmodified connection to whatever host is in the address bar, it does <b>not</b> prove the host is the right one.
+    Confirm this exact URL against Wildcat's official announcement (their site, a signed message, or a person you trust). If you reached here from a
+    link you cannot vouch for, stop.</p>
+  `);
+}
+
+/* ---------- Arm: private bundle ---------- */
+function armLegs(){ return [$('#rawA'),$('#rawB'),$('#rawC')].map(t=>t.value.trim()).filter(x=>/^0x[0-9a-fA-F]+$/.test(x)); }
+function relayList(){ return $('#relay').value.split(/[\s,]+/).map(s=>s.trim()).filter(x=>/^https?:\/\//.test(x)); }
+function refreshArmState(){
+  const ok = relayList().length>=1 && armLegs().length>=2;
+  $('#submitBundle').disabled = !ok; $('#simBundle').disabled = !ok;
+}
+['rawA','rawB','rawC','relay'].forEach(id=>$('#'+id).addEventListener('input',refreshArmState));
+$('#relay').addEventListener('change',()=>localStorage.setItem('int_relay',$('#relay').value));
+function armlog(m){ $('#armLog').textContent += m+'\n'; }
+async function targetBlockHex(){ const head=await pickEndpoint(); return '0x'+(Number(BigInt(head.blk.number))+1).toString(16); }
+$('#simBundle').onclick=()=>runRelays('eth_callBundle', true);
+$('#submitBundle').onclick=()=>{
+  if(!confirm('Submit this bundle directly to the relay(s) listed? This can move funds on mainnet. Wildcat Labs is not involved in submission.')) return;
+  runRelays('eth_sendBundle', false);
+};
+// Fan out to every listed relay in parallel. Each is your browser talking straight
+// to a builder, Wildcat Labs is never in the path. Only CORS-open, keyless builders
+// (Titan today) succeed from the browser; the rest need a relayer you run.
+async function runRelays(method, sim){
+  const relays=relayList(), txs=armLegs();
+  if(!relays.length){ armlog('enter at least one relay URL (https://…).'); return; }
+  let blockNumber; try{ blockNumber=await targetBlockHex(); }catch(e){ armlog('could not read head block: '+e.message); return; }
+  const params=sim?[{txs,blockNumber,stateBlockNumber:'latest'}]:[{txs,blockNumber}];
+  armlog(`${sim?'simulating':'submitting'} ${txs.length}-leg bundle → ${relays.length} relay(s), target block ${parseInt(blockNumber,16)} (direct; not via Wildcat Labs) …`);
+  await Promise.all(relays.map(async(relay)=>{
+    try{
+      const res=await (await fetch(relay,{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({jsonrpc:'2.0',id:1,method,params})})).json();
+      if(sim && res.result?.results) armlog(`  ${host(relay)}: sim ${res.result.results.map((r,i)=>r.error?('leg'+(i+1)+' REVERT'):'ok').join(', ')}`);
+      else if(sim && (res.error?.code===-32601||/method not found/i.test(res.error?.message||''))) armlog(`  ${host(relay)}: no simulation (eth_callBundle unsupported here)`);
+      else if(res.result!=null) armlog(`  ${host(relay)}: ${JSON.stringify(res.result)}`);
+      else armlog(`  ${host(relay)}: ${JSON.stringify(res.error??res)}`);
+    }catch(e){ armlog(`  ${host(relay)}: blocked, ${e.message.slice(0,70)} (browser CORS/auth; reach this builder through a relayer you run)`); }
+  }));
+}
+
+/* ---------- Arm: wallet ---------- */
+$('#connect').onclick=async()=>{
+  if(!window.ethereum){ armlog('no injected wallet found.'); return; }
+  try{
+    const accs=await window.ethereum.request({method:'eth_requestAccounts'});
+    const cid=await window.ethereum.request({method:'eth_chainId'});
+    $('#wallet').innerHTML=kv('connected',accs[0])+kv('chainId',parseInt(cid,16));
+    armlog('wallet connected: '+accs[0]+' (chain '+parseInt(cid,16)+'). Public broadcast only; not front-run-safe.');
+  }catch(e){ armlog('connect error: '+e.message); }
+};
+
+/* ---------- Ask-AI menu ---------- */
+const AI_PROMPT = 'Explain Ripcord, an emergency recovery tool for Wildcat V2 lending markets. When a lender wallet is compromised and has a withdrawal already queued from it, Ripcord executes that withdrawal and forwards the released funds to a safe wallet in a single private, atomic builder bundle, so a sweeper watching the public mempool cannot front-run the release. Cover: how the process/execute/forward bundle works, why the withdrawal must already be queued from the compromised wallet (its precondition), why it is best-effort with no guarantees, and how to use it safely. Then answer my questions about it.';
+(function(){
+  const enc = encodeURIComponent(AI_PROMPT);
+  $('#ai-chatgpt').href   = 'https://chat.openai.com/?q='+enc;
+  $('#ai-claude').href    = 'https://claude.ai/new?q='+enc;
+  $('#ai-perplexity').href= 'https://www.perplexity.ai/search?q='+enc;
+  const menu=$('#askAiMenu'), btn=$('#askAiBtn');
+  const setOpen=(o)=>{ menu.classList.toggle('hidden',!o); btn.setAttribute('aria-expanded',o?'true':'false'); };
+  btn.onclick=(e)=>{ e.stopPropagation(); setOpen(menu.classList.contains('hidden')); };
+  menu.addEventListener('click',(e)=>{ if(e.target.closest('a')) setOpen(false); e.stopPropagation(); });
+  $('#ai-copy').onclick=()=>{ copyText(AI_PROMPT); setOpen(false); };
+  document.addEventListener('click',()=>setOpen(false));
+})();
+
+init();
+</script>
+</body>
+</html>

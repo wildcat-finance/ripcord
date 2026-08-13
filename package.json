@@ -1,0 +1,13 @@
+{
+  "name": "ripcord",
+  "version": "1.0.0",
+  "description": "The web frontend for Ripcord: emergency withdrawal recovery on Wildcat V2 markets.",
+  "type": "module",
+  "scripts": {
+    "start": "node hosted/view-proxy.js"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "license": "MIT"
+}
