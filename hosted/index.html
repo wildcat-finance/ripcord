@@ -768,7 +768,7 @@ $('#connect').onclick=async()=>{
 };
 
 /* ---------- Ask-AI menu ---------- */
-const AI_PROMPT = 'Explain Ripcord, an emergency recovery tool for Wildcat V2 lending markets. When a lender wallet is compromised and has a withdrawal already queued from it, Ripcord executes that withdrawal and forwards the released funds to a safe wallet in a single private, atomic builder bundle, so a sweeper watching the public mempool cannot front-run the release. Cover: how the process/execute/forward bundle works, why the withdrawal must already be queued from the compromised wallet (its precondition), why it is best-effort with no guarantees, and how to use it safely. Then answer my questions about it.';
+const AI_PROMPT = 'I want to understand Ripcord, Wildcat Labs\' emergency withdrawal-recovery tool for Wildcat V2 markets. Use these two sources: the source repository at https://github.com/wildcat-finance/ripcord and the documentation page at https://docs.wildcat.finance/security-measures/ripcord. In short, Ripcord executes a withdrawal already queued from a compromised lender wallet and forwards the released funds to a safe wallet in one private, atomic builder bundle, so a sweeper watching the public mempool cannot front-run the release. Read those sources, then explain how the process/execute/forward bundle works, why the withdrawal must already be queued from the compromised wallet (its precondition), why it is best-effort with no guarantees, and how to use it safely. Then answer my questions about it.';
 (function(){
   const enc = encodeURIComponent(AI_PROMPT);
   $('#ai-chatgpt').href   = 'https://chat.openai.com/?q='+enc;
