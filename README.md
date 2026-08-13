@@ -21,6 +21,8 @@ set in `READ_RPC`. Anything that could submit a transaction, it refuses.
 
 `hosted/deploy/` has the Caddy config, a systemd unit, and notes for standing it up.
 
+`scripts/offline-sign.js` is the offline signer for the forward transaction, leg three of the bundle. It is the same code the app embeds and offers for download, kept here as the canonical copy so you can check its SHA-256 against the value the app shows before you run it. It needs only `ethers`; run it in a throwaway offline folder, never where the app is served.
+
 ## Running it locally
 
 ```bash
