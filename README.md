@@ -35,15 +35,20 @@ You do not need `npm install`; the server only uses Node built-ins (Node 20 or l
 ## How it actually works
 
 `executeWithdrawal` in a Wildcat V2 market is permissionless, but it always sends the released asset to
-whichever account queued the withdrawal. So Ripcord puts three transactions in one block:
+whichever account queued the withdrawal. So Ripcord puts up to four transactions in one block:
 
+0. a plain ETH transfer to the account, optionally, so it can pay the gas for step 3;
 1. `repayAndProcessUnpaidWithdrawalBatches(0, N)`, optionally, to apply liquidity already in the market to the batch;
 2. `executeWithdrawal(account, expiry)`, to release the asset to the account;
 3. a signed ERC-20 transfer moving the released asset from the account to a safe destination.
 
-The first two are permissionless, so any funded relayer can sign them. The third can only be signed by the
-account holder, and that happens offline; the page never sees the key. The bundle goes to builders privately
-and lands all-or-nothing, so the release cannot be front-run.
+The first three are permissionless, so any funded wallet can sign them. The last can only be signed by the
+account holder, and that happens offline; the page never sees the key. The account pays the gas for that
+transfer: a builder rejects it unless the account holds gas limit × max fee in ETH at that point, which is what
+step 0 is for. In a live compromise that ETH cannot be sent ahead of time, a sweeper would take it, so it goes
+inside the bundle. The bundle goes to builders privately and lands all-or-nothing, so the release cannot be
+front-run. The amount in step 3 is what `executeWithdrawal` will actually pay, `normalizedAmountPaid × the
+account's share of the batch`, which is fixed once the batch is paid and does not grow with interest.
 
 ## The precondition, and what it cannot do
 
@@ -51,6 +56,27 @@ This only helps if a withdrawal has already been requested from the compromised 
 moved off to a hostile address before that request went in, there is nothing here, or anywhere, that gets
 them back. And because inclusion depends on a builder actually winning the block, it is best-effort; you may
 need to resubmit across a few blocks.
+
+## Operator fire script
+
+`scripts/ripcord-fire.js` does from a terminal what the Arm panel does by hand, with the checks in front.
+Given the compromised account A, the safe destination B and a gas wallet C whose key it holds, it:
+
+1. checks every leg against the chain before sending anything: signer, nonce, target contract, the forward
+   amount against the batch's real payout, and the ETH A must hold to pay leg 3's gas;
+2. gives A that ETH, either as an ordinary transfer from C mined first (default; rehearsal only, a sweeper
+   takes ETH sent ahead of time) or as leg 0 inside the bundle (`--fund-in-bundle`, the safe path);
+3. once the batch has expired, submits the bundle to every relay for the next block and repeats each block
+   until B's token balance has risen, A's nonce has moved past leg 3, or `--max-minutes` runs out.
+
+```bash
+mkdir ripcord-fire && cd ripcord-fire && npm init -y && npm pkg set type=module && npm i ethers@6
+cp /path/to/ripcord/scripts/ripcord-fire.js .
+node ripcord-fire.js --rpc https://your-read-endpoint --market 0x… --account 0x… --destination 0x… \
+  --leg2 signed-execute.txt --leg3 signed-forward.txt --funder-key-file gas-wallet.key --fund-in-bundle --dry-run
+```
+
+`--dry-run` runs the checks and prints the plan without sending. Drop it to fire. It never asks for A's key.
 
 ## Security model
 
