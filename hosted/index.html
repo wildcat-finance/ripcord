@@ -202,16 +202,23 @@
         <h3 style="font-size:13px;margin:0 0 6px;">A · Private bundle (pre-signed) <button class="q" data-explain="bundle">?</button></h3>
         <p class="muted" style="font-size:12px;margin:0 0 10px;">The forward leg has to be signed by the receiving
           account, offline. You never enter a key here.</p>
-        <button id="howToSign" class="primary" style="margin-bottom:12px;">How to produce the signed forward transaction →</button>
+        <div style="display:flex; gap:10px; flex-wrap:wrap; margin-bottom:12px;">
+          <button id="howToSign" class="primary">How to produce the signed forward transaction →</button>
+          <button id="howToFund">Funding leg (gas for leg 3) →</button>
+        </div>
         <label>Relay endpoints, one per line, submitted in parallel <button class="q" data-explain="relay">?</button></label>
         <textarea id="relay" spellcheck="false" placeholder="https://rpc.titanbuilder.xyz" style="min-height:46px;"></textarea>
         <div class="muted" style="font-size:11px;margin-top:5px;">Defaults to a <b>fan-out relayer</b> that fires at Flashbots, Titan and beaverbuild at once, with a direct Titan line as a browser fallback. Bundles stay private and atomic, and only land when a builder wins the block. Edit the list (one per line) to use your own. Wildcat Labs the company is not in the submit path.</div>
+        <label>Signed leg 0, fund the account with ETH for leg 3's gas (optional, 0x…) <button class="q" data-explain="fund">?</button></label>
+        <textarea id="rawF" spellcheck="false"></textarea>
+        <div id="fundCheck" class="muted mono" style="font-size:11px;margin-top:4px;"></div>
         <label>Signed leg 1, process/execute (0x…)</label>
         <textarea id="rawA" spellcheck="false"></textarea>
         <label>Signed leg 2, execute/forward (0x…)</label>
         <textarea id="rawB" spellcheck="false"></textarea>
         <label>Signed leg 3, forward, from the account (0x…)</label>
         <textarea id="rawC" spellcheck="false"></textarea>
+        <div id="legCheck" class="muted mono" style="font-size:11px;margin-top:4px;"></div>
         <div style="display:flex; gap:10px; margin-top:12px;">
           <button id="simBundle" disabled>Simulate</button>
           <button id="submitBundle" class="primary" disabled>Submit private bundle</button>
@@ -256,29 +263,35 @@
 //
 // OFFLINE forward-transaction signer.
 //
-// Run this on an air-gapped (offline) machine. It builds and signs ONE ERC-20
-// transfer transaction from the parameters you were given, using your private
-// key, and prints the signed transaction as a hex string. The key is used only
+// Run this on an air-gapped (offline) machine. It builds and signs ONE
+// transaction from the parameters you were given, using your private key, and
+// prints the signed transaction as a hex string. By default that is the
+// forward leg, an ERC-20 transfer from the account. With "kind": "fund" in the
+// parameters it is instead the optional funding leg, a plain ETH transfer TO
+// the account from any funded wallet, so the account can pay the forward leg's
+// gas. The key is used only
 // to sign; it is never written anywhere and never sent over any network. This
 // script makes no network connections at all.
 //
 // You hand back only the signed hex string. That string authorises exactly one
-// thing: moving the stated amount of the stated token to the stated
-// destination. It cannot be altered to do anything else.
+// thing: moving the stated amount of the stated token (or, for the funding leg,
+// the stated ETH) to the stated destination. It cannot be altered to do
+// anything else.
 //
 // Usage:
-//   node offline-sign.js sign-params.json
+//   node offline-sign.js sign-params.json      (forward leg, from the account)
+//   node offline-sign.js fund-params.json      (funding leg, from a gas wallet)
 //     - reads the transaction parameters from the JSON file
 //     - prompts for your private key (input is masked), or reads PRIVATE_KEY
 //       from the environment, or --key-file <path>
 //
 // Requires the `ethers` package. Prepare a folder WHILE ONLINE:
-//   mkdir ripcord-sign && cd ripcord-sign && npm init -y && npm i ethers@6
+//   mkdir ripcord-sign && cd ripcord-sign && npm init -y && npm pkg set type=module && npm i ethers@6
 // then drop this file and sign-params.json in it and go offline to sign.
 
 import { readFileSync, writeFileSync } from 'node:fs';
 import readline from 'node:readline';
-import { Wallet, Interface, getAddress, formatUnits } from 'ethers';
+import { Wallet, Interface, getAddress, formatUnits, formatEther } from 'ethers';
 
 const ERC20_TRANSFER = new Interface(['function transfer(address to, uint256 amount) returns (bool)']);
 
@@ -316,26 +329,45 @@ async function main() {
     fail(`could not read params file "${paramsPath}": ${e.message}`);
   }
 
-  for (const k of ['chainId', 'asset', 'destination', 'amount', 'nonce', 'gasLimit', 'maxFeePerGas', 'maxPriorityFeePerGas']) {
+  const kind = p.kind === 'fund' ? 'fund' : 'forward';
+  const required = ['chainId', 'destination', 'amount', 'nonce', 'gasLimit', 'maxFeePerGas', 'maxPriorityFeePerGas'];
+  if (kind === 'forward') required.push('asset');
+  for (const k of required) {
     if (p[k] === undefined || p[k] === null || p[k] === '') fail(`params missing field: ${k}`);
   }
 
-  const asset = getAddress(p.asset);
   const destination = getAddress(p.destination);
   const amount = BigInt(p.amount);
-  const decimals = p.decimals != null ? Number(p.decimals) : 6;
-
-  const tx = {
+  const base = {
     type: 2,
     chainId: Number(p.chainId),
-    to: asset,
-    value: 0n,
-    data: ERC20_TRANSFER.encodeFunctionData('transfer', [destination, amount]),
     nonce: Number(p.nonce),
     gasLimit: BigInt(p.gasLimit),
     maxFeePerGas: BigInt(p.maxFeePerGas),
     maxPriorityFeePerGas: BigInt(p.maxPriorityFeePerGas),
   };
+
+  let tx, lines, outFile;
+  if (kind === 'fund') {
+    // Funding leg: a plain ETH transfer that gives the account gas money for the
+    // forward leg. Signed by any funded wallet, never by the account itself.
+    tx = { ...base, to: destination, value: amount, data: '0x' };
+    lines = [
+      `  action:              send ${formatEther(amount)} ETH (gas money for the forward leg)`,
+      `  to the account:      ${destination}`,
+    ];
+    outFile = 'signed-fund-tx.txt';
+  } else {
+    const asset = getAddress(p.asset);
+    const decimals = p.decimals != null ? Number(p.decimals) : 6;
+    tx = { ...base, to: asset, value: 0n, data: ERC20_TRANSFER.encodeFunctionData('transfer', [destination, amount]) };
+    lines = [
+      `  token contract:      ${asset}`,
+      `  action:              transfer ${formatUnits(amount, decimals)} tokens`,
+      `  to destination:      ${destination}`,
+    ];
+    outFile = 'signed-forward-tx.txt';
+  }
 
   const key = await getKey();
   let wallet;
@@ -346,10 +378,8 @@ async function main() {
   }
 
   process.stdout.write('\nYou are about to sign this, and ONLY this:\n');
-  process.stdout.write(`  from (your account): ${wallet.address}\n`);
-  process.stdout.write(`  token contract:      ${asset}\n`);
-  process.stdout.write(`  action:              transfer ${formatUnits(amount, decimals)} tokens\n`);
-  process.stdout.write(`  to destination:      ${destination}\n`);
+  process.stdout.write(`  from (${kind === 'fund' ? 'funding wallet' : 'your account'}): ${wallet.address}\n`);
+  for (const l of lines) process.stdout.write(l + '\n');
   process.stdout.write(`  nonce:               ${tx.nonce}\n`);
   process.stdout.write(`  chainId:             ${tx.chainId} (1 = Ethereum mainnet)\n\n`);
 
@@ -361,14 +391,19 @@ async function main() {
   }
 
   const signed = await wallet.signTransaction(tx);
-  writeFileSync('signed-forward-tx.txt', signed + '\n');
+  writeFileSync(outFile, signed + '\n');
 
   process.stdout.write('Signed transaction (this is what you send back):\n\n');
   process.stdout.write(signed + '\n\n');
-  process.stdout.write('Also written to: signed-forward-tx.txt\n');
+  process.stdout.write(`Also written to: ${outFile}\n`);
   process.stdout.write('This string is safe to send over a secure channel. It is NOT your key.\n');
-  process.stdout.write('Do not use this wallet again until told the recovery is complete, or the\n');
-  process.stdout.write('nonce will change and this transaction will stop being valid.\n');
+  if (kind === 'fund') {
+    process.stdout.write('Do not send anything else from this funding wallet until the bundle has landed,\n');
+    process.stdout.write('or its nonce will change and this transaction will stop being valid.\n');
+  } else {
+    process.stdout.write('Do not use this wallet again until told the recovery is complete, or the\n');
+    process.stdout.write('nonce will change and this transaction will stop being valid.\n');
+  }
 }
 
 main().catch((e) => fail(e.message));
@@ -377,12 +412,12 @@ main().catch((e) => fail(e.message));
 <script>
 const $ = (s)=>document.querySelector(s);
 const SEL = { avail:'0x088fee5e', balanceOf:'0x70a08231', asset:'0x38d52e0f', decimals:'0x313ce567', symbol:'0x95d89b41',
-  currentState:'0x0c3f6acf', unpaid:'0x878eb921', acctStatus:'0x02372c4f' };
+  currentState:'0x0c3f6acf', unpaid:'0x878eb921', acctStatus:'0x02372c4f', batch:'0xdbcd50b4' };
 const TOPIC_WQ = '0x605eb120a664587f757c3ad540b028e87c7780c210c18c05ddde789272c2b12f';
 const ETHERSCAN = 'https://etherscan.io';
 const READ = '/read';               // same-origin read-only feed; upstream lives in server env only
 const STALE_SECONDS = 90;
-const BUILD_ID = 'ripcord-2026-08-13';
+const BUILD_ID = 'ripcord-2026-09-18';
 // Operator fan-out relayer (submits to Flashbots + Titan + beaverbuild at once),
 // with a direct Titan line as a browser fallback if the relayer is unreachable.
 const DEFAULT_RELAYS = 'https://167.172.153.36.nip.io\nhttps://rpc.titanbuilder.xyz';
@@ -414,6 +449,26 @@ const wordAt=(hex,i)=>'0x'+hex.replace(/^0x/,'').slice(i*64,i*64+64);
 function decU32Array(hex){ const b=hex.replace(/^0x/,''); const len=parseInt(b.slice(64,128),16); const out=[]; for(let i=0;i<len;i++) out.push(Number(BigInt('0x'+b.slice(128+i*64,128+i*64+64)))); return out; }
 function fmtDate(ts){ return new Date(ts*1000).toISOString().replace('T',' ').slice(0,16)+' UTC'; }
 const shortTx=(h)=>h.slice(0,10)+'…'+h.slice(-6);
+const shortAddr=(a)=>a.slice(0,8)+'…'+a.slice(-4);
+const fmtEth=(w)=>fmt(w,18);
+// Minimal RLP + EIP-1559 decoder, enough to read gas, fee, nonce, to and value off a pasted signed leg.
+const hexToBytes=(h)=>Uint8Array.from((h.replace(/^0x/,'').match(/../g)||[]).map(x=>parseInt(x,16)));
+const bytesToHex=(u)=>'0x'+[...u].map(x=>x.toString(16).padStart(2,'0')).join('');
+const bytesToBig=(u)=>u.length?BigInt(bytesToHex(u)):0n;
+function rlpDecode(b,i=0){
+  const x=b[i];
+  if(x<0x80) return [b.subarray(i,i+1), i+1];
+  if(x<0xb8){ const l=x-0x80; return [b.subarray(i+1,i+1+l), i+1+l]; }
+  if(x<0xc0){ const ll=x-0xb7, l=Number(bytesToBig(b.subarray(i+1,i+1+ll))); return [b.subarray(i+1+ll,i+1+ll+l), i+1+ll+l]; }
+  let l,start; if(x<0xf8){ l=x-0xc0; start=i+1; } else { const ll=x-0xf7; l=Number(bytesToBig(b.subarray(i+1,i+1+ll))); start=i+1+ll; }
+  const out=[]; let j=start; while(j<start+l){ const [v,n]=rlpDecode(b,j); out.push(v); j=n; } return [out,start+l];
+}
+function decodeTx2(raw){
+  try{ const b=hexToBytes(raw); if(b[0]!==2) return null; const [f]=rlpDecode(b,1); if(!Array.isArray(f)||f.length<9) return null;
+    return { chainId:bytesToBig(f[0]), nonce:bytesToBig(f[1]), maxPrio:bytesToBig(f[2]), maxFee:bytesToBig(f[3]), gas:bytesToBig(f[4]), to:bytesToHex(f[5]), value:bytesToBig(f[6]), data:bytesToHex(f[7]) };
+  }catch{ return null; }
+}
+const FWD_GAS_DEFAULT=120000n, FWD_MAXFEE_DEFAULT=200000000000n;
 const esc=(s)=>String(s).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
 async function sha256(text){ const h=await crypto.subtle.digest('SHA-256', new TextEncoder().encode(text)); return [...new Uint8Array(h)].map(x=>x.toString(16).padStart(2,'0')).join(''); }
 function download(name, text, type='text/plain'){ const b=new Blob([text],{type}); const u=URL.createObjectURL(b); const a=document.createElement('a'); a.href=u; a.download=name; document.body.appendChild(a); a.click(); a.remove(); setTimeout(()=>URL.revokeObjectURL(u),1000); }
@@ -455,17 +510,25 @@ const EXPLAIN = {
     released asset to the account that queued the withdrawal. Doing the claim and the move-to-safety as two public transactions leaves a gap a
     sweeper can exploit.</p>
     <p>ripcord closes that gap with a single private bundle of up to three transactions, landing together in one block:</p>
+    <div class="step"><b>0 · fund</b>, a plain ETH transfer to the account so it can pay leg 3's gas (optional, only if the account holds too little ETH).</div>
     <div class="step"><b>1 · process</b>, <code>repayAndProcessUnpaidWithdrawalBatches(0, N)</code> applies liquidity already in the market to the batch (optional).</div>
     <div class="step"><b>2 · execute</b>, <code>executeWithdrawal(account, expiry)</code> releases the asset to the account.</div>
     <div class="step"><b>3 · forward</b>, an ERC-20 transfer of the released asset from the account to the destination.</div>
-    <p>Legs 1 and 2 are permissionless (any funded relayer signs them). Leg 3 can only be signed by the account, offline. The bundle is atomic and
+    <p>Legs 0 to 2 are permissionless (any funded wallet signs them). Leg 3 can only be signed by the account, offline, and the account pays its gas:
+    a builder rejects it unless the account holds gas limit × max fee in ETH when it runs, which is what leg 0 is for. The bundle is atomic and
     private, so the release cannot be front-run.</p>` },
+  fund:{ t:'Funding leg (leg 0)', b:`<p>Leg 3 is sent by the account, so the account pays its gas. Ethereum checks up front that the sender holds
+    <b>gas limit × max fee</b>; if the compromised account holds less, a builder rejects leg 3 as insufficient funds and drops the whole bundle.</p>
+    <p>Leg 0 fixes that inside the bundle: a plain ETH transfer of the shortfall to the account, signed by any funded wallet and placed first. Because
+    the bundle is all-or-nothing, the ETH only moves if the recovery lands. Sending it ahead of time as an ordinary transaction is not safe in a live
+    compromise, a sweeper takes it within seconds. Live state shows the current shortfall; the <b>Funding leg</b> button builds the parameters.</p>` },
   arm:{ t:'Arming', b:`<p>Arming assembles the signed legs and submits them. This page holds no keys, and Wildcat Labs the company is not in the submit path. Submission goes from your browser to the default relayer, to any endpoint you set, or from local operator tooling.</p>
     <p><b>Path A (private bundle)</b> is the front-run-safe path: pre-signed transactions submitted atomically. <b>Path B (wallet)</b> broadcasts
     publicly and is for testnet or rehearsal only.</p>` },
-  bundle:{ t:'Private bundle (pre-signed)', b:`<p>Paste the three signed legs, then submit them atomically to a relay. Legs 1–2 are produced by the
+  bundle:{ t:'Private bundle (pre-signed)', b:`<p>Paste the signed legs, then submit them atomically to a relay. Legs 1–2 are produced by the
     operator's relayer; leg 3 is the forward, signed offline by the account holder, use the <b>“How to produce the signed forward transaction”</b>
-    button, which never asks for a key here.</p><p>Most bundle relays require a signed identity header and block browser requests (CORS); if submission
+    button, which never asks for a key here. Leg 0 is optional and only needed when the account holds too little ETH to pay leg 3's gas; the
+    <b>Funding leg</b> button builds it.</p><p>Most bundle relays require a signed identity header and block browser requests (CORS); if submission
     fails, run it from local operator tooling instead.</p>` },
   wallet:{ t:'Wallet path (rehearsal only)', b:`<p>Connects an injected wallet (e.g. MetaMask) to broadcast the legs as ordinary public transactions. This is
     visible in the mempool and therefore <b>not</b> front-run-safe. Use it for testnet or a dry rehearsal, never for the live recovery.</p>` },
@@ -494,9 +557,20 @@ async function discoverBatches(url, market, account, now, dp, sym, force=false){
     let unpaid=[]; try{ unpaid=decU32Array(await call(url,market,SEL.unpaid)); }catch{}
     const cand=[...new Set([pendingExpiry,...unpaid].filter(x=>x>0))];
     for(const expiry of cand){
-      const st=await call(url,market,SEL.acctStatus+pad(account)+pad(BigInt(expiry).toString(16)));
+      const hexExp=pad(BigInt(expiry).toString(16));
+      const st=await call(url,market,SEL.acctStatus+pad(account)+hexExp);
       const scaled=BigInt(wordAt(st,0)), withdrawn=BigInt(wordAt(st,1));
-      if(scaled>0n) batches.push({expiry, queued: scaled*scaleFactor/(10n**27n), withdrawn, tx:null});
+      if(scaled===0n) continue;
+      // What executeWithdrawal pays is fixed once the batch is paid: floor(normalizedAmountPaid * share) minus what
+      // was already withdrawn (mirrors _executeWithdrawal). It does not grow with interest. Only the unpaid remainder
+      // still tracks the scale factor, so the forward leg is sized from the paid part and the rest is shown separately.
+      const wb=await call(url,market,SEL.batch+hexExp);
+      const batchScaled=BigInt(wordAt(wb,0)), burned=BigInt(wordAt(wb,1)), paid=BigInt(wordAt(wb,2));
+      const paidShare=batchScaled>0n ? paid*scaled/batchScaled : 0n;
+      const release=paidShare>withdrawn ? paidShare-withdrawn : 0n;
+      const unpaidScaled=batchScaled>0n ? (batchScaled-burned)*scaled/batchScaled : scaled;
+      const owed=unpaidScaled*scaleFactor/(10n**27n);
+      batches.push({expiry, release, owed, fullyPaid: batchScaled>0n && burned===batchScaled, withdrawn, tx:null});
     }
   }catch(e){ box.textContent='could not read batch state ('+e.message+')'; discKey=key; discBatches=[]; return; }
   try{
@@ -514,7 +588,8 @@ async function discoverBatches(url, market, account, now, dp, sym, force=false){
 }
 function batchCard(b,now,dp,sym){
   const when=`${fmtDate(b.expiry)} · <span class="mono">${b.expiry}</span>`;
-  const amt=b.queued!=null?`queued ≈ ${fmt(b.queued,dp)} ${sym}`:'';
+  const amt=b.release==null?'':b.fullyPaid?`release ${fmt(b.release,dp)} ${sym} (fixed, batch fully paid)`
+    :`release ${fmt(b.release,dp)} ${sym} paid so far · ≈ ${fmt(b.owed,dp)} ${sym} still owed, unpaid`;
   const state=b.expiry<=now?(b.claimable!=null?`claimable ${fmt(b.claimable,dp)} ${sym}`:'executable'):`pending · expires in ${b.expiry-now}s`;
   const link=b.tx?` · <a href="${ETHERSCAN}/tx/${b.tx}" target="_blank" rel="noopener">queue tx ${shortTx(b.tx)} ↗</a>`
     :` · <a href="${ETHERSCAN}/token/${$('#market').value.trim()}?a=${$('#account').value.trim()}" target="_blank" rel="noopener">withdrawals on Etherscan ↗</a>`;
@@ -525,7 +600,7 @@ function renderBatches(now,dp,sym){
   if(!discBatches.length){ sel.classList.add('hidden'); box.textContent='No queued withdrawals found for this account in this market.'; return; }
   if(discBatches.length===1){ sel.classList.add('hidden'); box.innerHTML=batchCard(discBatches[0],now,dp,sym); return; }
   sel.classList.remove('hidden');
-  sel.innerHTML=discBatches.map(b=>`<option value="${b.expiry}">${fmtDate(b.expiry)} · ${b.queued!=null?fmt(b.queued,dp)+' '+sym:'batch '+b.expiry}</option>`).join('');
+  sel.innerHTML=discBatches.map(b=>`<option value="${b.expiry}">${fmtDate(b.expiry)} · ${b.release!=null?fmt(b.release,dp)+' '+sym:'batch '+b.expiry}</option>`).join('');
   sel.value=$('#expiry').value.trim()||String(discBatches[0].expiry);
   const cur=discBatches.find(b=>String(b.expiry)===sel.value)||discBatches[0];
   box.innerHTML=batchCard(cur,now,dp,sym);
@@ -534,7 +609,8 @@ function renderBatches(now,dp,sym){
 
 /* ---------- Config persistence + carry-back context ---------- */
 const FIELDS=['market','account','expiry','destination'];
-let signCtx = { account:'', nonce:null, asset:'', decimals:6, sym:'', destination:'', chainId:1, expiry:0, queued:null, release:null };
+let signCtx = { account:'', nonce:null, asset:'', decimals:6, sym:'', destination:'', chainId:1, expiry:0, release:null };
+let liveCtx = { ethBal:null, nonce:null, asset:'', chainId:1, account:'' };
 function init(){
   const q=new URLSearchParams(location.search);
   for (const f of FIELDS) $('#'+f).value = q.get(f)||localStorage.getItem('int_'+f)||'';
@@ -566,22 +642,33 @@ async function refresh(){
     let avail=0n; if(expNow){ try{ avail=toBig(await call(url,market,SEL.avail+pad(account)+pad(BigInt(expNow).toString(16)))); }catch{} }
     const acctBal=toBig(await call(url,asset,SEL.balanceOf+pad(account)));
     const destBal=destination?toBig(await call(url,asset,SEL.balanceOf+pad(destination))):0n;
+    let ethBal=null; try{ ethBal=toBig(await rpcOn(url,'eth_getBalance',[account,'latest'])); }catch{}
     const exp=Number(expNow||0), sec=exp-now;
     // carry-back context for the signing guide
     let nonce=null; try{ nonce=Number(BigInt(await rpcOn(url,'eth_getTransactionCount',[account,'latest']))); }catch{}
     let chainId=1; try{ chainId=Number(BigInt(await rpcOn(url,'eth_chainId',[]))); }catch{}
     const selBatch=discBatches.find(b=>String(b.expiry)===expNow);
     signCtx={ account, nonce, asset, decimals:dp, sym, destination, chainId, expiry:exp,
-              queued:selBatch?selBatch.queued:null, release:signCtx.release };
+              release:selBatch?selBatch.release:null };
+    liveCtx={ ethBal, nonce, asset, chainId, account };
+    const gas=fundStatus();
     const status=!exp?'<span class="pill">no expiry set</span>'
       :sec<=0?'<span class="pill ok">executable</span>'
       :`<span class="pill warn">waits ${sec}s (~${(sec/3600).toFixed(1)}h)</span>`;
     $('#state').innerHTML=kv('status',status)+kv('asset',`${asset} ${sym?'('+sym+')':''}`)
       +kv('claimable now',fmt(avail,dp))+kv('account balance',fmt(acctBal,dp))
       +kv('destination balance',fmt(destBal,dp))+kv('account nonce',nonce??'n/a')
-      +kv('block time / expiry',`${now} / ${exp||'n/a'}`);
+      +kv('block time / expiry',`${now} / ${exp||'n/a'}`)
+      +kv('account ETH',ethBal==null?'n/a':fmtEth(ethBal)+' ETH')
+      +kv('leg 3 gas need',`${fmtEth(gas.need)} ETH <span class="muted">(${esc(gas.src)})</span> `
+          +(ethBal==null?'':gas.covered?'<span class="pill ok">covered</span>':`<span class="pill err">short by ${fmtEth(gas.shortfall)} ETH</span>`))
+      +(ethBal!=null&&!gas.covered?`<div class="notice danger" style="grid-column:1/-1;font-size:12px;">Leg 3 is sent by the account, so the account pays its gas. It holds
+          ${fmtEth(ethBal)} ETH but needs ${fmtEth(gas.need)} ETH (gas limit × max fee) at the moment it runs; a builder rejects it as insufficient funds and the
+          whole bundle is dropped. Add a <b>funding leg (leg 0)</b> with the button under Arm, or top up the account. In a live compromise only the in-bundle leg is safe:
+          ETH sent ahead of time is swept.</div>`:'');
     $('#rpcstate').innerHTML=`<span class="pill ${age>STALE_SECONDS?'warn':'ok'}">${age>STALE_SECONDS?'stale':'ok'} · block ${Number(toBig(blk.number))}</span>`;
     $('#served').innerHTML=`<span class="muted">read feed · head age ${age}s</span>`;
+    legCheck();
   }catch(e){
     $('#rpcstate').innerHTML='<span class="pill err">read feed unavailable</span>';
     $('#served').innerHTML='';
@@ -594,7 +681,7 @@ $('#refresh').onclick=refresh;
 function signParamsObject(){
   const dp=signCtx.decimals;
   const margin = dp>=2 ? 10n**BigInt(dp-2) : 0n;                    // 0.01 of the asset
-  const base = signCtx.release ?? signCtx.queued ?? 0n;
+  const base = signCtx.release ?? 0n;                                // paid release only, never the interest-tracking estimate
   const amount = base>margin ? base-margin : 0n;
   return {
     chainId: signCtx.chainId||1,
@@ -616,7 +703,7 @@ function openSignGuide(){
   const warns=[];
   if(!/^0x[0-9a-fA-F]{40}$/.test(signCtx.destination||'')) warns.push('No <b>destination</b> set, fill the Destination field first; the signed transaction is bound to it.');
   if(signCtx.nonce==null) warns.push('Account <b>nonce</b> not read yet, press Refresh; the signed transaction is bound to the current nonce.');
-  if(!signCtx.queued && !signCtx.release) warns.push('No batch <b>amount</b> detected yet, press Refresh with the batch selected.');
+  if(!signCtx.release) warns.push('No paid <b>release</b> detected yet, press Refresh with the batch selected. If the batch is still unpaid there is nothing to forward yet.');
   const warnHtml = warns.length?`<div class="notice danger" style="margin:0 0 14px;">${warns.map(w=>'• '+w).join('<br>')}</div>`:'';
   const amtHuman = fmt(BigInt(p.amount||'0'),dp);
   openModal('Produce the signed forward transaction', `
@@ -627,7 +714,7 @@ function openSignGuide(){
 
     <h4>1 · Prepare a folder (while online)</h4>
     <div class="code">mkdir ripcord-sign &amp;&amp; cd ripcord-sign
-npm init -y &amp;&amp; npm i ethers@6</div>
+npm init -y &amp;&amp; npm pkg set type=module &amp;&amp; npm i ethers@6</div>
     <p class="muted" style="font-size:12px;">You can then disconnect from the internet for every step that follows.</p>
 
     <h4>2 · Save the signer into that folder</h4>
@@ -644,8 +731,11 @@ npm init -y &amp;&amp; npm i ethers@6</div>
       <button class="primary" onclick="download('sign-params.json', document.getElementById('paramsCode').textContent, 'application/json')">Download sign-params.json</button>
       <button onclick="copyText(document.getElementById('paramsCode').textContent)">Copy JSON</button>
     </div>
-    <p class="muted" style="font-size:12px;margin-top:8px;">Amount is sized from the account's detected balance minus a 0.01 ${esc(sym)} margin. If you have a fresh
-      <i>simulated release</i> figure nearer the day, use that minus a small margin instead. Gas fields are generous defaults; raise them if the network is busy.</p>
+    <p class="muted" style="font-size:12px;margin-top:8px;">Amount is the paid release for the selected batch, <span class="mono">normalizedAmountPaid × your share</span>, which is exactly what
+      <code>executeWithdrawal</code> pays out, minus a 0.01 ${esc(sym)} margin. Once a batch is paid this figure does not grow with interest, so do not
+      size from the market's current balance. Any still-unpaid part of the batch is excluded; re-size after it is paid. Gas fields are generous defaults; raise them if the network is busy.
+      <b>The account pays this transaction's gas</b>: it must hold gas limit × max fee, ${esc(fmtEth(BigInt(p.gasLimit)*BigInt(p.maxFeePerGas)))} ETH with these values, when it runs,
+      or a builder rejects it. If it does not, use <b>Funding leg</b> to add leg 0.</p>
 
     <h4>4 · Sign, offline</h4>
     <div class="code">node offline-sign.js sign-params.json</div>
@@ -674,6 +764,108 @@ function useSignedForward(){
 }
 $('#howToSign').onclick=openSignGuide;
 window.useSignedForward=useSignedForward;
+
+/* ---------- Funding leg (gas for leg 3) + pasted-leg checks ---------- */
+function forwardGasNeed(){ // wei the account must hold when leg 3 executes: gas limit × max fee
+  const d=decodeTx2($('#rawC').value.trim());
+  if(d) return { need:d.gas*d.maxFee, src:'from the pasted leg 3', d };
+  return { need:FWD_GAS_DEFAULT*FWD_MAXFEE_DEFAULT, src:'signing guide defaults, paste leg 3 for the exact figure', d:null };
+}
+function fundStatus(){
+  const {need,src,d}=forwardGasNeed();
+  const acct=(liveCtx.account||$('#account').value.trim()).toLowerCase();
+  const f=decodeTx2($('#rawF').value.trim());
+  const fundVal=(f&&acct&&f.to.toLowerCase()===acct)?f.value:0n;
+  const have=(liveCtx.ethBal??0n)+fundVal;
+  return { need, src, d, f, fundVal, have, covered:have>=need, shortfall:have>=need?0n:need-have };
+}
+function legCheck(){
+  const mark=(v)=>v==null?'?':v?'✓':'✗';
+  const acct=(liveCtx.account||$('#account').value.trim()).toLowerCase();
+  const gas=fundStatus();
+  let out='';
+  const c=$('#rawC').value.trim();
+  if(c){ const d=decodeTx2(c); if(!d) out='leg 3: not a type-2 (EIP-1559) transaction, cannot check it here.'; else {
+    const nonceOk=liveCtx.nonce==null?null:Number(d.nonce)===liveCtx.nonce;
+    const toOk=liveCtx.asset?d.to.toLowerCase()===liveCtx.asset.toLowerCase():null;
+    out=`leg 3: nonce ${d.nonce} ${mark(nonceOk)}${nonceOk===false?` (account is at ${liveCtx.nonce}, re-sign)`:''} · to ${shortAddr(d.to)} ${mark(toOk)}${toOk===false?' (not the market asset)':''}`
+       +` · chain ${d.chainId} · account must hold ${fmtEth(d.gas*d.maxFee)} ETH (${d.gas} gas × ${fmt(d.maxFee,9)} gwei)`
+       +(liveCtx.ethBal==null?'':gas.covered?' ✓ covered':` ✗ short by ${fmtEth(gas.shortfall)} ETH`);
+  } }
+  $('#legCheck').textContent=out;
+  let fo='';
+  const f=$('#rawF').value.trim();
+  if(f){ const d=decodeTx2(f); if(!d) fo='leg 0: not a type-2 (EIP-1559) transaction, cannot check it here.'; else {
+    const toOk=acct?d.to.toLowerCase()===acct:null;
+    fo=`leg 0: sends ${fmtEth(d.value)} ETH to ${shortAddr(d.to)} ${mark(toOk)}${toOk===false?' (NOT the account)':''} · nonce ${d.nonce}`
+      +(d.data!=='0x'?' · carries calldata, a funding leg should not':'');
+  } }
+  $('#fundCheck').textContent=fo;
+}
+function fundParamsObject(funder, funderNonce){
+  const gas=fundStatus();
+  return {
+    kind: 'fund',
+    chainId: liveCtx.chainId||1,
+    expectedFrom: funder||'0x…',
+    destination: liveCtx.account||$('#account').value.trim()||'0x…',
+    amount: gas.shortfall.toString(),
+    nonce: funderNonce??0,
+    gasLimit: '21000',
+    maxFeePerGas: (gas.d?gas.d.maxFee:FWD_MAXFEE_DEFAULT).toString(),
+    maxPriorityFeePerGas: (gas.d?gas.d.maxPrio:1000000000n).toString()
+  };
+}
+function openFundGuide(){
+  const gas=fundStatus(), p=fundParamsObject('',null);
+  const held=liveCtx.ethBal==null?'<b>unknown, press Refresh first</b>':`<b>${fmtEth(liveCtx.ethBal)} ETH</b>`;
+  openModal('Funding leg (gas for leg 3)', `
+    <p>Leg 3 is sent by the account, so the account pays its gas. A builder rejects it unless the account holds <b>gas limit × max fee</b> in ETH
+    at the moment it runs: <b>${fmtEth(gas.need)} ETH</b> (${esc(gas.src)}). The account holds ${held}${gas.fundVal>0n?`, plus ${fmtEth(gas.fundVal)} ETH from the pasted leg 0`:''}.
+    ${liveCtx.ethBal==null?'':gas.covered?'<b>That covers it; no funding leg is needed.</b>':`<b>Shortfall: ${fmtEth(gas.shortfall)} ETH.</b>`}</p>
+    <p>Leg 0 is a plain ETH transfer of that shortfall to the account, placed first in the bundle. Any funded wallet can sign it, <b>never the account
+    itself</b>. The bundle is all-or-nothing, so the ETH only moves if the whole recovery lands. In a live compromise do not send it ahead of time as an
+    ordinary transaction: a sweeper takes it within seconds. Gas that leg 3 does not use is refunded to the account, not to you, so keep the amount at the shortfall.</p>
+    <p class="muted" style="font-size:12px;">Use a wallet other than the one that signed legs 1 and 2, or re-sign those with the next nonce: leg 0 runs first and takes the lower nonce.</p>
+    <h4>1 · Funding wallet</h4>
+    <div style="display:flex;gap:8px;flex-wrap:wrap;"><input id="funderAddr" spellcheck="false" placeholder="0x… wallet that will send the ETH" style="flex:1;min-width:280px;" /><button onclick="readFunder()">Read nonce</button></div>
+    <div id="funderInfo" class="muted" style="font-size:12px;margin-top:6px;">Enter the address and press Read nonce; the parameters below need its current nonce.</div>
+    <h4>2 · Save the parameters as <span class="mono">fund-params.json</span> next to <span class="mono">offline-sign.js</span></h4>
+    <div class="code" id="fundParamsCode">${esc(JSON.stringify(p,null,2))}</div>
+    <div class="copyrow">
+      <button class="primary" onclick="download('fund-params.json', document.getElementById('fundParamsCode').textContent, 'application/json')">Download fund-params.json</button>
+      <button onclick="copyText(document.getElementById('fundParamsCode').textContent)">Copy JSON</button>
+    </div>
+    <h4>3 · Sign, offline, with the funding wallet's key</h4>
+    <div class="code">node offline-sign.js fund-params.json</div>
+    <p class="muted" style="font-size:12px;">Same script as the forward leg; get it from the forward-leg guide if you have not already. It prints exactly what it signs,
+    send X ETH to the account, and writes <span class="mono">signed-fund-tx.txt</span>.</p>
+    <h4>4 · Paste the signed string</h4>
+    <textarea id="pasteFund" placeholder="0x… signed funding transaction"></textarea>
+    <div class="copyrow"><button class="primary" onclick="useSignedFund()">Use as funding leg (leg 0)</button></div>
+  `);
+}
+async function readFunder(){
+  const a=($('#funderAddr')?.value||'').trim();
+  if(!/^0x[0-9a-fA-F]{40}$/.test(a)){ toast('enter a valid 0x… address'); return; }
+  const info=$('#funderInfo'); info.textContent='reading…';
+  try{
+    const [n,b]=await Promise.all([rpcOn(READ,'eth_getTransactionCount',[a,'latest']), rpcOn(READ,'eth_getBalance',[a,'latest'])]);
+    const nonce=Number(BigInt(n)), bal=toBig(b), p=fundParamsObject(a,nonce);
+    const total=BigInt(p.amount)+BigInt(p.gasLimit)*BigInt(p.maxFeePerGas);
+    info.innerHTML=`nonce ${nonce} · balance ${fmtEth(bal)} ETH · this leg needs up to ${fmtEth(total)} ETH `+(bal>=total?'<span class="pill ok">enough</span>':'<span class="pill err">not enough</span>');
+    $('#fundParamsCode').textContent=JSON.stringify(p,null,2);
+  }catch(e){ info.textContent='could not read: '+e.message; }
+}
+function useSignedFund(){
+  const v=($('#pasteFund')?.value||'').trim();
+  if(!/^0x[0-9a-fA-F]+$/.test(v)){ toast('paste a 0x… signed transaction'); return; }
+  const d=decodeTx2(v), acct=(liveCtx.account||$('#account').value.trim()).toLowerCase();
+  if(d&&acct&&d.to.toLowerCase()!==acct){ armlog(`funding leg refused: it pays ${d.to}, not the account ${acct}.`); toast('that transaction does not pay the account'); return; }
+  $('#rawF').value=v; refreshArmState(); legCheck(); closeModal(); armlog('funding leg (leg 0) inserted.'); toast('inserted as leg 0');
+}
+$('#howToFund').onclick=openFundGuide;
+window.readFunder=readFunder; window.useSignedFund=useSignedFund;
 
 /* ---------- Security panel ---------- */
 async function securityModal(){
@@ -721,13 +913,16 @@ async function securityModal(){
 }
 
 /* ---------- Arm: private bundle ---------- */
-function armLegs(){ return [$('#rawA'),$('#rawB'),$('#rawC')].map(t=>t.value.trim()).filter(x=>/^0x[0-9a-fA-F]+$/.test(x)); }
+const LEG_IDS=[['rawF','leg 0 fund'],['rawA','leg 1 process'],['rawB','leg 2 execute'],['rawC','leg 3 forward']];
+function armLegList(){ return LEG_IDS.map(([id,name])=>({name,raw:$('#'+id).value.trim()})).filter(x=>/^0x[0-9a-fA-F]+$/.test(x.raw)); }
+function armLegs(){ return armLegList().map(x=>x.raw); }
 function relayList(){ return $('#relay').value.split(/[\s,]+/).map(s=>s.trim()).filter(x=>/^https?:\/\//.test(x)); }
 function refreshArmState(){
   const ok = relayList().length>=1 && armLegs().length>=2;
   $('#submitBundle').disabled = !ok; $('#simBundle').disabled = !ok;
 }
-['rawA','rawB','rawC','relay'].forEach(id=>$('#'+id).addEventListener('input',refreshArmState));
+['rawF','rawA','rawB','rawC','relay'].forEach(id=>$('#'+id).addEventListener('input',refreshArmState));
+['rawF','rawC'].forEach(id=>$('#'+id).addEventListener('input',legCheck));
 $('#relay').addEventListener('change',()=>localStorage.setItem('int_relay',$('#relay').value));
 function armlog(m){ $('#armLog').textContent += m+'\n'; }
 async function targetBlockHex(){ const head=await pickEndpoint(); return '0x'+(Number(BigInt(head.blk.number))+1).toString(16); }
@@ -740,7 +935,7 @@ $('#submitBundle').onclick=()=>{
 // to a builder, Wildcat Labs is never in the path. Only CORS-open, keyless builders
 // (Titan today) succeed from the browser; the rest need a relayer you run.
 async function runRelays(method, sim){
-  const relays=relayList(), txs=armLegs();
+  const relays=relayList(), legs=armLegList(), txs=legs.map(x=>x.raw);
   if(!relays.length){ armlog('enter at least one relay URL (https://…).'); return; }
   let blockNumber; try{ blockNumber=await targetBlockHex(); }catch(e){ armlog('could not read head block: '+e.message); return; }
   const params=sim?[{txs,blockNumber,stateBlockNumber:'latest'}]:[{txs,blockNumber}];
@@ -748,7 +943,7 @@ async function runRelays(method, sim){
   await Promise.all(relays.map(async(relay)=>{
     try{
       const res=await (await fetch(relay,{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({jsonrpc:'2.0',id:1,method,params})})).json();
-      if(sim && res.result?.results) armlog(`  ${host(relay)}: sim ${res.result.results.map((r,i)=>r.error?('leg'+(i+1)+' REVERT'):'ok').join(', ')}`);
+      if(sim && res.result?.results) armlog(`  ${host(relay)}: sim ${res.result.results.map((r,i)=>(legs[i]?.name||'leg '+(i+1))+(r.error?` REVERT (${String(r.revert||r.error).slice(0,60)})`:' ok')).join(', ')}`);
       else if(sim && (res.error?.code===-32601||/method not found/i.test(res.error?.message||''))) armlog(`  ${host(relay)}: no simulation (eth_callBundle unsupported here)`);
       else if(res.result!=null) armlog(`  ${host(relay)}: ${JSON.stringify(res.result)}`);
       else armlog(`  ${host(relay)}: ${JSON.stringify(res.error??res)}`);
