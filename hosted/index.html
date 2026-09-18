@@ -222,6 +222,7 @@
         <div style="display:flex; gap:10px; margin-top:12px;">
           <button id="simBundle" disabled>Simulate</button>
           <button id="submitBundle" class="primary" disabled>Submit private bundle</button>
+          <button id="fireLocal" disabled>Fire via local script</button> <button class="q" data-explain="firelocal">?</button>
         </div>
       </div>
       <div>
@@ -421,6 +422,7 @@ const BUILD_ID = 'ripcord-2026-09-18';
 // Operator fan-out relayer (submits to Flashbots + Titan + beaverbuild at once),
 // with a direct Titan line as a browser fallback if the relayer is unreachable.
 const DEFAULT_RELAYS = 'https://167.172.153.36.nip.io\nhttps://rpc.titanbuilder.xyz';
+const LOCAL_FIRE = 'http://127.0.0.1:8787'; // scripts/ripcord-fire.js --listen
 // Published SHA-256 of the relayer source Wildcat runs; the Security panel fetches
 // the relayer's /attest and compares. Update if the relayer build changes.
 const EXPECTED_RELAYER_SHA256 = '8d4e1bc966e43fc9e4e88bec2e40f491734219eab61de77f1ac7326ddbab299d';
@@ -517,6 +519,10 @@ const EXPLAIN = {
     <p>Legs 0 to 2 are permissionless (any funded wallet signs them). Leg 3 can only be signed by the account, offline, and the account pays its gas:
     a builder rejects it unless the account holds gas limit × max fee in ETH when it runs, which is what leg 0 is for. The bundle is atomic and
     private, so the release cannot be front-run.</p>` },
+  firelocal:{ t:'Fire via local script', b:`<p>Hands the pasted legs to <span class="mono">scripts/ripcord-fire.js</span> running on your own machine
+    (<span class="mono">node ripcord-fire.js --listen …</span>, on <span class="mono">${LOCAL_FIRE}</span>). The script checks every leg against the chain,
+    funds the account's gas from a wallet whose key it holds, waits for the batch to expire, then submits the bundle to the relays for every block
+    until the destination has received the tokens. Preflight problems come back into this log. The page itself sends nothing to a relay on this path.</p>` },
   fund:{ t:'Funding leg (leg 0)', b:`<p>Leg 3 is sent by the account, so the account pays its gas. Ethereum checks up front that the sender holds
     <b>gas limit × max fee</b>; if the compromised account holds less, a builder rejects leg 3 as insufficient funds and drops the whole bundle.</p>
     <p>Leg 0 fixes that inside the bundle: a plain ETH transfer of the shortfall to the account, signed by any funded wallet and placed first. Because
@@ -919,7 +925,7 @@ function armLegs(){ return armLegList().map(x=>x.raw); }
 function relayList(){ return $('#relay').value.split(/[\s,]+/).map(s=>s.trim()).filter(x=>/^https?:\/\//.test(x)); }
 function refreshArmState(){
   const ok = relayList().length>=1 && armLegs().length>=2;
-  $('#submitBundle').disabled = !ok; $('#simBundle').disabled = !ok;
+  $('#submitBundle').disabled = !ok; $('#simBundle').disabled = !ok; $('#fireLocal').disabled = !ok;
 }
 ['rawF','rawA','rawB','rawC','relay'].forEach(id=>$('#'+id).addEventListener('input',refreshArmState));
 ['rawF','rawC'].forEach(id=>$('#'+id).addEventListener('input',legCheck));
@@ -927,6 +933,14 @@ $('#relay').addEventListener('change',()=>localStorage.setItem('int_relay',$('#r
 function armlog(m){ $('#armLog').textContent += m+'\n'; }
 async function targetBlockHex(){ const head=await pickEndpoint(); return '0x'+(Number(BigInt(head.blk.number))+1).toString(16); }
 $('#simBundle').onclick=()=>runRelays('eth_callBundle', true);
+$('#fireLocal').onclick=async()=>{
+  if(!confirm('Hand this bundle to the local fire script at '+LOCAL_FIRE+'? It will fund the account, wait for expiry and fire each block. This can move funds on mainnet.')) return;
+  const legs=armLegList(); armlog(`handing ${legs.length}-leg bundle [${legs.map(l=>l.name).join(', ')}] to ${LOCAL_FIRE} …`);
+  try{
+    const res=await (await fetch(LOCAL_FIRE,{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({jsonrpc:'2.0',id:1,method:'ripcord_fire',params:[{txs:legs.map(l=>l.raw)}]})})).json();
+    armlog('  local script: '+(res.error?res.error.message:JSON.stringify(res.result)));
+  }catch(e){ armlog(`  local script not reachable at ${LOCAL_FIRE} (${e.message.slice(0,60)}). Start it with: node ripcord-fire.js --listen …`); }
+};
 $('#submitBundle').onclick=()=>{
   if(!confirm('Submit this bundle directly to the relay(s) listed? This can move funds on mainnet. Wildcat Labs is not involved in submission.')) return;
   runRelays('eth_sendBundle', false);
