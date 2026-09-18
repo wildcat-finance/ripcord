@@ -83,6 +83,12 @@ page as usual, and press **Fire via local script**. The page hands the legs to `
 script runs the same checks, funds, waits for expiry and fires each block, and any preflight problem is
 reported back into the page's log.
 
+`scripts/sign-variants.js` pre-signs forward legs across several nonces and fee tiers, so a nonce bump or a
+contested block is a file swap rather than an offline signing session under time pressure.
+`scripts/supervise.js` runs the fire script and restarts it with the right one when the account's nonce moves.
+`scripts/sweep-wallet.js` recovers what is left in the gas wallet afterwards, most of the bond it put up for
+leg 0 having gone unspent. `scripts/OPERATOR.md` is the runbook for all of it.
+
 ## Security model
 
 Market data is read-only and provided as is, without warranty, so check it against something you trust before
