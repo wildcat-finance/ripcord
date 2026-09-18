@@ -78,6 +78,11 @@ node ripcord-fire.js --rpc https://your-read-endpoint --market 0x… --account 0
 
 `--dry-run` runs the checks and prints the plan without sending. Drop it to fire. It never asks for A's key.
 
+Or let the page drive it: start the script with `--listen` instead of `--leg2/--leg3`, paste the legs in the
+page as usual, and press **Fire via local script**. The page hands the legs to `http://127.0.0.1:8787`; the
+script runs the same checks, funds, waits for expiry and fires each block, and any preflight problem is
+reported back into the page's log.
+
 ## Security model
 
 Market data is read-only and provided as is, without warranty, so check it against something you trust before
